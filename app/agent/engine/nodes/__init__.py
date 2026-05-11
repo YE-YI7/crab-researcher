@@ -88,6 +88,7 @@ async def node_understand(state: AgentState, deps: NodeDeps, user_message: str) 
         state.has_product_info = True
         state.intent = "growth_request"
         state.deliverable_intent = _detect_deliverable_intent(msg)
+        state.deep_research_mode = _detect_deep_research(msg)
         
         # 自我引用检测
         is_self_ref = _is_self_referencing(msg)
@@ -139,6 +140,7 @@ async def node_understand(state: AgentState, deps: NodeDeps, user_message: str) 
         state.has_product_info = True
         state.intent = "followup"
         state.deliverable_intent = _detect_deliverable_intent(msg)
+        state.deep_research_mode = _detect_deep_research(msg)
         if not state.product_info:
             state.product_info["raw_description"] = msg
         return state
@@ -241,7 +243,83 @@ async def node_research(state: AgentState, deps: NodeDeps) -> AsyncIterator[dict
     
     elapsed = int((time.time() - t0) * 1000)
     useful_count = sum(1 for sr in state.search_results if sr.get("useful"))
-    logger.info(f"RESEARCH done: {state.tool_call_count} calls, {useful_count} useful results, {elapsed}ms")
+    logger.info(f"RESEARCH done (base): {state.tool_call_count} calls, {useful_count} useful results, {elapsed}ms")
+
+    # === LLM 引导的扩展轮（P1.3 + P2.1）===
+    # 触发条件：
+    #   (A) 用户显式要求深度研究 — state.deep_research_mode
+    #   (B) 基础查询召回率太低（useful_count < 2），扩展 1 轮抢救
+    # 任一命中且 LLM 可用 → 让 LLM 看现有结果，提出 1-2 个新角度的查询
+    should_expand = state.deep_research_mode or (useful_count < 2 and len(state.search_results) > 0)
+    if should_expand and deps.llm is not None and search_tool:
+        yield {"type": "status", "content": "Expanding research with follow-up queries..."}
+
+        # 构造给 LLM 的现状摘要
+        existing = "\n".join(
+            f"- '{r.get('query','')}': useful={r.get('useful', False)}, "
+            f"snippet={json.dumps(r.get('result',{}), default=str)[:250]}"
+            for r in state.search_results[:5]
+        )
+        reason = "user requested deep research" if state.deep_research_mode else "initial results were thin"
+
+        try:
+            from app.agent.engine.llm_adapter import TaskTier
+            resp = await deps.llm.generate(
+                system_prompt=(
+                    "You are a research analyst. Given a product and what was already searched, "
+                    "propose 1-2 NEW search queries that explore angles the existing queries missed. "
+                    "Good follow-ups: pricing/willingness-to-pay, user complaints/churn reasons, "
+                    "channel-specific tactics, regulatory/legal considerations, niche communities.\n"
+                    f"Reason for expansion: {reason}.\n\n"
+                    "Return ONLY a JSON array of 1-2 strings. Example: "
+                    '["RankFlow user complaints reddit", "indie SEO tool willingness to pay"]'
+                ),
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Product: {json.dumps(state.product_info, ensure_ascii=False, default=str)[:400]}\n\n"
+                        f"Already searched ({useful_count} useful / {len(state.search_results)} total):\n{existing}"
+                    ),
+                }],
+                tier=TaskTier.PARSING,
+                max_tokens=200,
+            )
+            raw = (getattr(resp, "content", "") or "").strip()
+            if "```" in raw:
+                if "```json" in raw:
+                    raw = raw.split("```json", 1)[1]
+                else:
+                    raw = raw.split("```", 1)[1]
+                raw = raw.split("```", 1)[0].strip()
+            if "[" in raw and "]" in raw:
+                raw = raw[raw.index("["): raw.rindex("]") + 1]
+            new_queries = json.loads(raw)
+            if isinstance(new_queries, list):
+                # 去重 + 截到 2 个 + 过滤已搜过的
+                new_queries = [
+                    q.strip() for q in new_queries
+                    if isinstance(q, str) and q.strip() and q.strip() not in state.searched_queries
+                ][:2]
+                if new_queries:
+                    logger.info(f"RESEARCH expansion: {new_queries}")
+                    expand_tasks = [_exec_tool(search_tool, query=q) for q in new_queries]
+                    expand_results = await asyncio.gather(*expand_tasks, return_exceptions=True)
+                    for i, r in enumerate(expand_results):
+                        q = new_queries[i]
+                        state.searched_queries.add(q)
+                        if isinstance(r, Exception) or not isinstance(r, dict):
+                            continue
+                        content_len = len(json.dumps(r, default=str))
+                        state.search_results.append({
+                            "tool": "web_search", "query": q, "result": r,
+                            "useful": content_len > 200 and not r.get("error"),
+                            "source": "llm_expansion",
+                        })
+                        state.tool_call_count += 1
+                    new_useful = sum(1 for sr in state.search_results if sr.get("source") == "llm_expansion" and sr.get("useful"))
+                    logger.info(f"RESEARCH expansion done: +{new_useful} useful from {len(new_queries)} new queries")
+        except Exception as e:
+            logger.debug(f"RESEARCH expansion failed (non-fatal): {e}")
 
 
 # ===== Node 3: EXPERT（专家圆桌）=====
@@ -452,6 +530,13 @@ async def node_deliver(state: AgentState, deps: NodeDeps) -> AsyncIterator[dict]
     want_playbook = intent == "full"  # Playbook 仅在完整方案时生成
     logger.info(f"DELIVER intent={intent} report={want_report} drafts={want_drafts} plan={want_plan} playbook={want_playbook}")
 
+    def _wrap_deliverable(name: str, desc: str, content: str) -> dict:
+        """统一封装：附带 safety warnings 给前端展示"""
+        warnings = _check_output_safety(content)
+        if warnings:
+            logger.warning(f"Deliverable '{name}' safety hits: {warnings}")
+        return {"name": name, "desc": desc, "warnings": warnings}
+
     # 并行生成 3 个交付物
     async def _gen_report():
         if not research_text:
@@ -463,8 +548,8 @@ async def node_deliver(state: AgentState, deps: NodeDeps) -> AsyncIterator[dict]
         )
         path = workspace / "reports" / f"competitor_analysis_{product_name.lower().replace(' ','_')}.md"
         path.write_text(f"# Competitor Analysis: {product_name}\n\n{r.content}", encoding="utf-8")
-        return {"name": "Competitor Analysis", "desc": f"reports/{path.name}"}
-    
+        return _wrap_deliverable("Competitor Analysis", f"reports/{path.name}", r.content)
+
     async def _gen_drafts():
         d = await deps.llm.generate(
             system_prompt=f"Write ready-to-post drafts in {lang}. Reddit post + Twitter thread.",
@@ -473,8 +558,8 @@ async def node_deliver(state: AgentState, deps: NodeDeps) -> AsyncIterator[dict]
         )
         path = workspace / "drafts" / f"first_posts_{product_name.lower().replace(' ','_')}.md"
         path.write_text(f"# Content Drafts: {product_name}\n\n{d.content}", encoding="utf-8")
-        return {"name": "Content Drafts (Reddit + X)", "desc": f"drafts/{path.name}"}
-    
+        return _wrap_deliverable("Content Drafts (Reddit + X)", f"drafts/{path.name}", d.content)
+
     async def _gen_plan():
         p = await deps.llm.generate(
             system_prompt=f"Create 30-day growth plan in {lang}. Week 1/2/3/4 format.",
@@ -483,7 +568,7 @@ async def node_deliver(state: AgentState, deps: NodeDeps) -> AsyncIterator[dict]
         )
         path = workspace / "plans" / f"30day_growth_{product_name.lower().replace(' ','_')}.md"
         path.write_text(f"# 30-Day Growth Plan: {product_name}\n\n{p.content}", encoding="utf-8")
-        return {"name": "30-Day Growth Plan", "desc": f"plans/{path.name}"}
+        return _wrap_deliverable("30-Day Growth Plan", f"plans/{path.name}", p.content)
     
     parallel_tasks = []
     if want_report:
@@ -535,7 +620,21 @@ Return ONLY valid JSON with: name, description, phases[].""",
     state.deliverables = deliverables
     if deliverables:
         files_msg = "\n".join(f"- {d['name']}: {d['desc']}" for d in deliverables)
-        yield {"type": "message", "content": f"I've prepared these for you:\n\n{files_msg}\n\nYou can find them in your workspace."}
+        # 收集所有交付物的 safety warnings
+        all_warnings = []
+        for d in deliverables:
+            for w in d.get("warnings", []) or []:
+                all_warnings.append(f"  - [{d['name']}] {w}")
+        warning_block = ""
+        if all_warnings:
+            warning_block = (
+                "\n\n⚠️ Pre-publish safety check flagged the following — review before sharing:\n"
+                + "\n".join(all_warnings)
+            )
+        yield {
+            "type": "message",
+            "content": f"I've prepared these for you:\n\n{files_msg}\n\nYou can find them in your workspace.{warning_block}",
+        }
 
 
 # ===== 辅助函数 =====
@@ -619,6 +718,26 @@ def _detect_product_info(message: str) -> bool:
     return False
 
 
+def _detect_deep_research(message: str) -> str:
+    """
+    检测用户是否显式要求深度研究（纯代码，0 token）。
+
+    命中时 node_research 会在基础模板查询之后追加 1 轮 LLM 引导的扩展查询，
+    扩展 1-2 个新角度。其它情况走基础流程，避免不必要的成本。
+    """
+    msg = message.lower()
+    triggers = [
+        # CN
+        "深入", "深度研究", "详细研究", "彻底调研", "深挖", "深度调研",
+        "全面分析", "深入分析",
+        # EN
+        "deep research", "deep dive", "investigate", "thorough research",
+        "in-depth", "in depth", "deeply analyze", "comprehensive analysis",
+        "explore in detail",
+    ]
+    return any(t in msg for t in triggers)
+
+
 def _detect_deliverable_intent(message: str) -> str:
     """
     检测用户想要哪类交付物（纯代码，0 token）。
@@ -666,6 +785,49 @@ def _detect_deliverable_intent(message: str) -> str:
 
     # 多意图叠加 / 模糊请求 → full（默认）
     return "full"
+
+
+# ===== 输出安全检查 =====
+
+# 显式 PII / 高风险声明的正则与关键词
+# 不追求完美召回（间接 PII 需要 classifier），只抓"会让用户当场出事"的显式情况
+_PII_PATTERNS = [
+    (re.compile(r"\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b"), "phone-like number"),
+    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "email address"),
+    (re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "card-number-like sequence"),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "SSN-like number"),
+]
+
+# 高风险声明（合规/广告法相关）
+_RISKY_CLAIMS = [
+    "fda approved", "fda-approved", "clinically proven", "doctor recommended",
+    "guaranteed results", "100% effective", "no side effects", "risk-free",
+    "guaranteed roi", "make $", "earn $", "passive income guaranteed",
+    "fda 批准", "临床证实", "百分百有效", "无副作用", "保证收益",
+]
+
+
+def _check_output_safety(content: str) -> list[str]:
+    """
+    扫描交付物文本里的合规/隐私风险。
+
+    Returns: 命中条目列表（人类可读字符串）。空列表表示通过。
+    设计为软警告而非硬阻断：
+    - 用户可能就是要写"价格 $99"这种内容，硬过滤会误伤
+    - 命中项写进 deliverable.warnings 让前端展示给用户决定怎么处理
+    """
+    if not content:
+        return []
+    hits = []
+    for pattern, label in _PII_PATTERNS:
+        if pattern.search(content):
+            hits.append(f"PII risk: {label}")
+    text_lower = content.lower()
+    for kw in _RISKY_CLAIMS:
+        if kw in text_lower:
+            hits.append(f"risky claim: {kw!r}")
+    # 去重保序
+    return list(dict.fromkeys(hits))
 
 
 def _is_self_referencing(msg: str) -> bool:

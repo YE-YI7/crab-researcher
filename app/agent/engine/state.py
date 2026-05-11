@@ -72,6 +72,9 @@ class AgentState:
     # "full" | "competitor_only" | "content_only" | "plan_only" | "none"
     deliverable_intent: str = "full"
 
+    # 深度研究模式 — node_research 会追加 1 轮 LLM 引导的扩展查询
+    deep_research_mode: bool = False
+
     # === Pipeline 步数预算（防止异常路径无限循环）===
     pipeline_step_count: int = 0
     max_pipeline_steps: int = 20
