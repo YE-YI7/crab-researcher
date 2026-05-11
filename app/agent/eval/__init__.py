@@ -1,89 +1,65 @@
 """
-CrabRes Agent Evaluation — Lightweight metrics collection
+CrabRes Agent Evaluation System — 三层评估框架
+
+L1: Unit Tests (单元测试)
+  - scenarios.py — 28+ 评估场景定义（routing/understand/research/expert/deliver/compaction/error/e2e/regression）
+  - assertions.py — 断言引擎（50+ 内置断言函数，支持 expression/custom/LLM 三种类型）
+  - runner.py — Eval Runner（DRY/FULL 两种模式，CI 友好）
+  - tests/eval/ — pytest 测试套件
+
+L2: Model & Human Evaluation (模型+人工评估)
+  - llm_judge.py — LLM-as-Judge（5 维度评分 + LLM-Human 一致性追踪）
+  - traces.py — Trace Logging（20 种事件类型的会话轨迹记录与回放）
+  - api/v2/eval_annotations.py — 人工标注 API
+
+L3: A/B Test (A/B 测试)
+  - ab_test.py — A/B Test 框架（创建/分组/分析/自动回滚/Welch's t-test）
+
+基础设施:
+  - collector.py — MetricsCollector（L1/L2 指标收集，JSONL 持久化）
+  - api/v2/eval.py — Eval Summary & Health API
 """
 
-import json
-import time
-import logging
-from pathlib import Path
-from typing import Optional
+from app.agent.eval.collector import MetricsCollector, get_collector
+from app.agent.eval.scenarios import (
+    EvalScenario, ScenarioCategory, Assertion,
+    SCENARIO_REGISTRY, get_scenarios_by_tag, get_scenarios_by_category,
+    get_critical_scenarios, get_active_scenarios,
+)
+from app.agent.eval.assertions import (
+    AssertionEngine, AssertResult, AssertionOutcome,
+    ScenarioResult, EvalRunSummary,
+)
+from app.agent.eval.runner import (
+    EvalRunner, EvalMode, run_eval_dry, run_eval_full,
+)
+from app.agent.eval.llm_judge import (
+    LLMJudge, JudgeResult, DimensionScore, ScoreDimension,
+    ConsistencyTracker, HumanAnnotation,
+)
+from app.agent.eval.traces import (
+    TraceCollector, TraceEvent, EventType, SessionSummary,
+    get_tracer, clear_tracer,
+)
+from app.agent.eval.ab_test import (
+    ABTestManager, ABTestConfig, ABTestResult, Observation,
+    TestStatus,
+)
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    # L1
+    "MetricsCollector", "get_collector",
+    "EvalScenario", "ScenarioCategory", "Assertion",
+    "SCENARIO_REGISTRY", "get_active_scenarios", "get_critical_scenarios",
+    "AssertionEngine", "ScenarioResult", "EvalRunSummary",
+    "EvalRunner", "EvalMode", "run_eval_dry", "run_eval_full",
 
+    # L2
+    "LLMJudge", "JudgeResult", "DimensionScore", "ScoreDimension",
+    "ConsistencyTracker", "HumanAnnotation",
+    "TraceCollector", "TraceEvent", "EventType", "SessionSummary",
+    "get_tracer", "clear_tracer",
 
-class MetricsCollector:
-    """
-    Lightweight metrics collection.
-    Hooks into pipeline and LLM adapter. Writes JSONL.
-    No external dependencies.
-    """
-
-    def __init__(self, base_dir: str = ".crabres/eval"):
-        self.base_dir = Path(base_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
-
-    def record_session(self, session_id: str, metrics: dict):
-        """Record metrics for a completed pipeline run"""
-        entry = {
-            "timestamp": time.time(),
-            "session_id": session_id,
-            **metrics,
-        }
-        path = self.base_dir / "sessions.jsonl"
-        with open(path, "a") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        logger.info(f"[Eval] Session {session_id}: TCR={metrics.get('tcr')}, TPT={metrics.get('tpt')}, CPT=${metrics.get('cpt', 0):.4f}")
-
-    def record_event(self, event_type: str, data: dict):
-        """Record individual events (LLM call, search, expert activation)"""
-        entry = {
-            "timestamp": time.time(),
-            "event": event_type,
-            **data,
-        }
-        path = self.base_dir / "events.jsonl"
-        with open(path, "a") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-    def get_summary(self, days: int = 7) -> dict:
-        """Generate summary metrics for the last N days"""
-        cutoff = time.time() - days * 86400
-        metrics = []
-        path = self.base_dir / "sessions.jsonl"
-        if path.exists():
-            for line in path.read_text().strip().split("\n"):
-                if line:
-                    try:
-                        entry = json.loads(line)
-                        if entry.get("timestamp", 0) > cutoff:
-                            metrics.append(entry)
-                    except json.JSONDecodeError:
-                        continue
-
-        if not metrics:
-            return {"period_days": days, "sessions": 0}
-
-        n = len(metrics)
-        return {
-            "period_days": days,
-            "sessions": n,
-            "avg_tcr": round(sum(m.get("tcr", 0) for m in metrics) / n, 2),
-            "avg_rdr": round(sum(m.get("rdr", 0) for m in metrics) / n, 2),
-            "avg_ear": round(sum(m.get("ear", 0) for m in metrics) / n, 2),
-            "avg_tpt": round(sum(m.get("tpt", 0) for m in metrics) / n),
-            "avg_cpt": round(sum(m.get("cpt", 0) for m in metrics) / n, 4),
-            "avg_ttc": round(sum(m.get("ttc", 0) for m in metrics) / n, 1),
-            "playbook_rate": round(sum(1 for m in metrics if m.get("pgr")) / n, 2),
-            "deliverable_rate": round(sum(1 for m in metrics if m.get("dgr")) / n, 2),
-        }
-
-
-# Global singleton
-_collector: Optional[MetricsCollector] = None
-
-
-def get_collector() -> MetricsCollector:
-    global _collector
-    if _collector is None:
-        _collector = MetricsCollector()
-    return _collector
+    # L3
+    "ABTestManager", "ABTestConfig", "ABTestResult", "Observation", "TestStatus",
+]
