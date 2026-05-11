@@ -7,6 +7,7 @@ CrabRes Agent Engine — 共享节点包
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -24,12 +25,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NodeDeps:
-    """节点依赖 — 所有节点需要的共享服务"""
-    llm = None          # LLMService
-    tools = None        # ToolRegistry
-    experts = None       # ExpertPool
-    memory = None        # Memory (GrowthMemory / DBGrowthMemory)
-    trust = None         # TrustManager
+    """节点依赖 — 所有节点需要的共享服务。
+
+    必须保留类型注解 — 没有注解的话 @dataclass 不会把它们当作字段，
+    NodeDeps(llm=..., tools=...) 会抛 TypeError。
+    """
+    llm: object = None         # LLMService / AgentLLM
+    tools: object = None       # ToolRegistry
+    experts: object = None     # ExpertPool
+    memory: object = None      # GrowthMemory / DBGrowthMemory
+    trust: object = None       # TrustManager (optional)
 
 
 # ===== Node 1: UNDERSTAND（意图理解 + 产品信息提取）=====
@@ -339,8 +344,12 @@ async def node_expert(state: AgentState, deps: NodeDeps) -> AsyncIterator[dict]:
     # CGO 综合
     yield {"type": "status", "content": "CGO synthesizing expert insights..."}
     
+    def _expert_name(eid: str) -> str:
+        e = deps.experts.get(eid)
+        return getattr(e, "name", eid) if e else eid
+
     expert_summary = "\n".join(
-        f"### {deps.experts.get(eid, type('', name=eid)).name} ({eid}):\n{output[:1500]}\n"
+        f"### {_expert_name(eid)} ({eid}):\n{output[:1500]}\n"
         for eid, output in expert_results.items()
     )
     

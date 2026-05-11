@@ -60,7 +60,7 @@ class GrowthMemory:
         old_data = None
         if path.exists():
             try:
-                old_data = json.loads(path.read_text())
+                old_data = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(old_data, dict):
                     version = old_data.get("_version", 0) + 1
             except Exception:
@@ -75,7 +75,7 @@ class GrowthMemory:
                                      ensure_ascii=False, default=str)
             data["_content_hash"] = hashlib.md5(content_str.encode()).hexdigest()[:12]
         
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         logger.debug(f"Memory saved: {category}/{key} (v{version})")
 
     async def load(self, key: str, category: str = "product") -> Optional[Any]:
@@ -84,7 +84,7 @@ class GrowthMemory:
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text())
+            return json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return None
 
@@ -131,7 +131,7 @@ class GrowthMemory:
         
         for path in knowledge_dir.glob("*.json"):
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 # 检查过期
                 expires_at = data.get("expires_at", 0)
                 if expires_at > 0 and now > expires_at:
@@ -165,7 +165,7 @@ class GrowthMemory:
         path = journal_dir / f"{today}.jsonl"
 
         entry["timestamp"] = entry.get("timestamp", time.time())
-        with open(path, "a") as f:
+        with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
 
     async def list_memories(self, category: str) -> list[str]:
@@ -184,7 +184,7 @@ class GrowthMemory:
                 continue
             for path in cat_dir.glob("*.json"):
                 try:
-                    content = path.read_text()
+                    content = path.read_text(encoding="utf-8")
                     if query.lower() in content.lower():
                         results.append({
                             "category": cat,
