@@ -15,7 +15,7 @@ def _generate_secret() -> str:
 class Settings(BaseSettings):
     # ========== 应用基础 ==========
     APP_NAME: str = "CrabRes"
-    APP_VERSION: str = "4.4.0"
+    APP_VERSION: str = "5.1.0"
     DEBUG: bool = False
     API_PREFIX: str = "/api"
     FRONTEND_URL: str = "https://crab-researcher.vercel.app"

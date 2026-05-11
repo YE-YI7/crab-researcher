@@ -212,10 +212,18 @@ app.include_router(telegram_router, prefix=settings.API_PREFIX)
 
 @app.get("/", tags=["Root"])
 async def root():
+    # Public root — no version disclosure (use /api/version for an
+    # authenticated/admin lookup if needed).
     return {
         "name": "🦀 CrabRes",
         "tagline": "AI Growth Strategy Agent",
-        "version": settings.APP_VERSION,
-        "docs": "/docs",
         "status": "running",
+        "docs": "/docs",
     }
+
+
+@app.get("/health", tags=["Root"])
+@app.get("/api/health", tags=["Root"])
+async def health():
+    """Liveness probe for Render/uptime monitors. No auth, no DB hit."""
+    return {"status": "ok", "version": settings.APP_VERSION}
