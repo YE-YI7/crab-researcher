@@ -150,6 +150,7 @@ class UserProduct(Base):
     # 关联
     discoveries = relationship("CompetitorDiscovery", back_populates="user_product", cascade="all, delete-orphan")
     competitors = relationship("CompetitorProduct", back_populates="user_product", cascade="all, delete-orphan")
+    scan_jobs = relationship("ScanJob", back_populates="product", cascade="all, delete-orphan")
 
 
 class CompetitorDiscovery(Base):

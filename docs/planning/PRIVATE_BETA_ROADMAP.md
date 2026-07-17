@@ -33,6 +33,12 @@ Exit condition: a research or execution job survives restarts, runs once, can be
 - [ ] Add structured logs, error monitoring, traces, and operational alerts.
 - [ ] Add CI for backend tests and frontend typecheck/build.
 
+Implemented foundation (not yet deployed): persistent `scan_jobs`, atomic job
+claiming, idempotent scan creation, evidence/result tables, tenant-scoped scan
+APIs, and a database-polling worker entrypoint with stale-job recovery. Remaining
+work includes deploying that worker, bounded retries/dead-letter handling, and
+moving all legacy sessions/execution paths onto the same control plane.
+
 ## Phase 2 — Evidence-first product loop
 
 Exit condition: a new user receives a specific, sourced opportunity and CrabRes can connect an approved action to an observed result.
@@ -44,6 +50,10 @@ Exit condition: a new user receives a specific, sourced opportunity and CrabRes 
 - [ ] Pull outcome metrics and connect them to the originating action.
 - [ ] Track activation, first-value time, weekly retention, approval rate, execution rate, and outcome rate.
 - [ ] Add one narrow integration set for the initial ICP instead of more expert personas.
+
+Implemented foundation (UI still pending): canonical source citations,
+competitor evidence, market signals, and ranked growth opportunities with
+confidence, effort, expected impact, and evidence IDs.
 
 ## Phase 3 — Paid design-partner offer
 
