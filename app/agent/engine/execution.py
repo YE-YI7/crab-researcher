@@ -23,6 +23,11 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+REAL_WORLD_ACTIONS = {
+    "reddit_post", "reddit_comment", "twitter_post", "publish_post",
+    "send_email", "bulk_email", "browser_action",
+}
+
 
 @dataclass
 class ExecutionRequest:
@@ -153,6 +158,16 @@ class ExecutionEngine:
 
     async def _do_execute(self, request: ExecutionRequest) -> ExecutionResult:
         """真正执行操作"""
+        if request.action_type in REAL_WORLD_ACTIONS:
+            from app.core.config import get_settings
+            if not get_settings().ENABLE_REAL_WORLD_EXECUTION:
+                return ExecutionResult(
+                    success=False,
+                    status="disabled",
+                    platform=request.platform,
+                    error="Real-world execution is disabled until tenant-scoped credentials are configured",
+                )
+
         # 记录到 ActionTracker
         action_record = None
         if self.tracker:

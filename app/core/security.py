@@ -6,6 +6,7 @@
 """
 
 from datetime import datetime, timedelta, timezone
+import hmac
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -51,7 +52,7 @@ async def get_current_user(
 ):
     """支持 Bearer Token 或 API Key 两种认证方式"""
     # 优先检查 API Key
-    if api_key and api_key == settings.API_KEY:
+    if api_key and settings.API_KEY and hmac.compare_digest(api_key, settings.API_KEY):
         return {"user_id": 0, "role": "api"}
 
     # 检查 Bearer Token
@@ -65,14 +66,39 @@ async def get_current_user(
     )
 
 
+async def require_user(current_user: dict = Depends(get_current_user)) -> dict:
+    """Require an authenticated human tenant, not the shared service API key."""
+    user_id = current_user.get("user_id")
+    if current_user.get("role") == "api" or not isinstance(user_id, int) or user_id <= 0:
+        raise HTTPException(status_code=403, detail="A user-scoped token is required")
+    return current_user
+
+
+async def require_admin(
+    admin_key: Optional[str] = Security(APIKeyHeader(name="X-Admin-Key", auto_error=False)),
+) -> dict:
+    """Protect process-wide operational controls with a dedicated admin key."""
+    if (
+        admin_key
+        and settings.ADMIN_API_KEY
+        and hmac.compare_digest(admin_key, settings.ADMIN_API_KEY)
+    ):
+        return {"role": "admin"}
+    raise HTTPException(status_code=403, detail="Administrator credentials required")
+
+
 # ========== 域名白名单校验 ==========
 
 def validate_domain(url: str) -> bool:
     """检查 URL 是否在允许的爬虫白名单域名中"""
     try:
         parsed = urlparse(url)
-        domain = parsed.netloc.lower()
-        return any(domain.endswith(allowed) for allowed in settings.ALLOWED_SCRAPE_DOMAINS)
+        domain = (parsed.hostname or "").lower().rstrip(".")
+        return any(
+            domain == allowed.lower().rstrip(".")
+            or domain.endswith(f".{allowed.lower().rstrip('.')}" )
+            for allowed in settings.ALLOWED_SCRAPE_DOMAINS
+        )
     except Exception:
         return False
 

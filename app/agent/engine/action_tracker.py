@@ -25,7 +25,6 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 ACTION_DIR = Path(".crabres/actions")
-ACTION_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ActionStatus(str, Enum):
@@ -157,7 +156,9 @@ class ActionTracker:
         tracker.mark_skill_extracted(action.action_id, "skill_bip_thread_001")
     """
 
-    def __init__(self):
+    def __init__(self, base_dir: str | Path | None = None):
+        self._action_dir = Path(base_dir or ACTION_DIR)
+        self._action_dir.mkdir(parents=True, exist_ok=True)
         self._actions: dict[str, ActionRecord] = {}
         self._load()
 
@@ -259,11 +260,11 @@ class ActionTracker:
 
     def _save(self):
         data = {k: v.to_dict() for k, v in self._actions.items()}
-        with open(ACTION_DIR / "actions.json", "w") as f:
+        with open(self._action_dir / "actions.json", "w") as f:
             json.dump(data, f, indent=2, default=str)
 
     def _load(self):
-        path = ACTION_DIR / "actions.json"
+        path = self._action_dir / "actions.json"
         if not path.exists():
             return
         try:

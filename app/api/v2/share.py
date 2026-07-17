@@ -5,32 +5,50 @@ CrabRes 分享卡片 API
 用户一键分享到 X/LinkedIn，自带品牌曝光。
 """
 
+from html import escape
 import logging
-from fastapi import APIRouter, Depends
+import math
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from app.core.security import get_current_user
+from app.core.config import get_settings
+from app.core.security import create_access_token, require_user, verify_token
 from app.agent.memory import GrowthMemory
 from app.components.creature.types import SPECIES_CONFIG
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/share", tags=["Share"])
+settings = get_settings()
+
+
+def _safe_number(value, default=0):
+    try:
+        number = float(value)
+        if not math.isfinite(number):
+            return default
+        return int(number) if number.is_integer() else round(number, 1)
+    except (TypeError, ValueError):
+        return default
 
 
 @router.get("/card/{user_id}", response_class=HTMLResponse)
-async def generate_share_card(user_id: int):
+async def generate_share_card(user_id: int, token: str = Query(...)):
     """
     生成分享卡片 HTML（可截图或用 puppeteer 转图片）
     
-    公开端点——不需要认证，因为分享链接会被转发。
+    公开端点，但必须持有该用户分享链接中的短期签名。
     """
+    payload = verify_token(token)
+    if payload.get("scope") != "share_card" or payload.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Invalid share link")
+
     memory = GrowthMemory(base_dir=f".crabres/memory/{user_id}")
     product = await memory.load("product") or {}
     stats = await memory.load("execution_stats", category="execution") or {}
 
-    product_name = product.get("name", "My Product")
-    total_users = stats.get("total_users", 0)
-    growth_rate = stats.get("growth_rate", 0)
-    streak = stats.get("streak_days", 0)
+    product_name = escape(str(product.get("name", "My Product")))
+    total_users = _safe_number(stats.get("total_users", 0))
+    growth_rate = _safe_number(stats.get("growth_rate", 0))
+    streak = _safe_number(stats.get("streak_days", 0))
     species = stats.get("species", "crab")
     spec = SPECIES_CONFIG.get(species, SPECIES_CONFIG["crab"])
 
@@ -155,12 +173,11 @@ async def generate_share_card(user_id: int):
 
 
 @router.get("/card-url")
-async def get_share_url(current_user: dict = Depends(get_current_user)):
+async def get_share_url(request: Request, current_user: dict = Depends(require_user)):
     """获取当前用户的分享卡片 URL"""
     uid = current_user.get("user_id", 0)
-    token = _generate_share_token(uid)
-    base = f"{_settings.FRONTEND_URL.rstrip('/')}"
-    api_base = "https://crab-researcher.onrender.com/api"
+    token = create_access_token({"user_id": uid, "scope": "share_card"})
+    api_base = f"{str(request.base_url).rstrip('/')}/api"
     card = f"{api_base}/share/card/{uid}?token={token}"
     return {
         "card_url": card,

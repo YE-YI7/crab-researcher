@@ -117,6 +117,7 @@ class MockResult:
     first_response: str = ""
     error: str | None = None
     status: str = ""
+    state: AgentState | None = None
 
 
 class EvalRunner:
@@ -339,6 +340,12 @@ class EvalRunner:
 
         elif decision.mode == ExecutionMode.QUICK:
             intent = decision.reason
+            if decision.reason in ("greeting", "self_awareness", "expert_chat"):
+                from app.agent.engine.nodes import NodeDeps, node_understand
+                state = await node_understand(state, NodeDeps(), input_text)
+                intent = state.intent or decision.reason
+                product_info = state.product_info or {}
+                language = state.language
             if decision.reason == "greeting":
                 phase = "quick"
             elif decision.reason == "self_awareness":

@@ -7,7 +7,7 @@ import { t } from '../lib/i18n'
 import PixFrontImg from '../assets/pix_fronted.png'
 import type { CreatureState } from '../components/creature/types'
 
-import { clearToken } from '../lib/api'
+import { api, clearToken } from '../lib/api'
 
 interface SettingsProps {
   creature: CreatureState
@@ -177,7 +177,6 @@ export function Settings({ creature, onBack, onLogout }: SettingsProps) {
             <button className="w-full p-4 text-left text-sm text-primary hover:bg-hover transition-colors"
               onClick={async () => {
                 try {
-                  const { api } = await import('../lib/api')
                   const plan = await api<any>('/growth/plan').catch(() => null)
                   const content = plan?.plan?.content || 'No data to export yet. Chat with CrabRes first!'
                   const blob = new Blob([content], { type: 'text/markdown' })

@@ -77,6 +77,8 @@ async def lifespan(app: FastAPI):
     # Growth Daemon（容错启动）
     daemon = None
     try:
+        if not settings.ENABLE_GLOBAL_DAEMON:
+            raise RuntimeError("Global daemon disabled; use tenant-scoped jobs")
         tools = ToolRegistry()
         tools.register(WebSearchTool())
         tools.register(ScrapeWebsiteTool())
@@ -95,7 +97,7 @@ async def lifespan(app: FastAPI):
         await daemon.start()
         logging.info("🤖 Growth Daemon started")
     except Exception as e:
-        logging.warning(f"🤖 Growth Daemon init failed: {e}")
+        logging.info(f"🤖 Growth Daemon not started: {e}")
     app.state.growth_daemon = daemon
 
     # EventBus（容错启动）

@@ -50,6 +50,8 @@ async def node_understand(state: AgentState, deps: NodeDeps, user_message: str) 
     """
     msg = user_message.strip()
     msg_lower = msg.lower()
+    if re.search(r"[\u4e00-\u9fff]", msg):
+        state.language = "zh"
     lang = state.language
     
     # --- 规则 1: @expert 私聊 ---
@@ -57,8 +59,8 @@ async def node_understand(state: AgentState, deps: NodeDeps, user_message: str) 
     if at_match:
         expert_id = at_match.group(1).lower()
         expert_task = at_match.group(2).strip()
-        expert = deps.experts.get(expert_id)
-        if expert:
+        expert = deps.experts.get(expert_id) if deps.experts else None
+        if deps.experts is None or expert:
             state.intent = "expert_chat"
             state.direct_reply = f"__EXPERT_CHAT__:{expert_id}:{expert_task}"
             return state
@@ -98,6 +100,10 @@ async def node_understand(state: AgentState, deps: NodeDeps, user_message: str) 
             state.product_info["is_self"] = True
         else:
             state.product_info["raw_description"] = msg
+            if not state.product_info.get("name"):
+                inferred_name = _infer_product_name(msg)
+                if inferred_name:
+                    state.product_info["name"] = inferred_name
             
             # LLM 提取结构化信息（仅当消息足够长时）
             if len(msg) > 30:
@@ -687,7 +693,7 @@ def _detect_product_info(message: str) -> bool:
     product_signals = [
         'my product', 'i built', 'i made', "i'm building", 'i have a',
         "it's a", 'it is a', 'we built', 'our product', 'we made',
-        '我的产品', '我做了', '我们做了', '我在做', '我开发了',
+        '我的产品', '我做了', '我们做了', '我在做', '我开发了', '帮助用户',
     ]
     if any(kw in msg for kw in product_signals):
         return True
@@ -716,6 +722,21 @@ def _detect_product_info(message: str) -> bool:
         return True
     
     return False
+
+
+def _infer_product_name(message: str) -> str:
+    """Best-effort, zero-token extraction for common product introductions."""
+    patterns = [
+        r"(?:we built|we made|i built|i made)\s+([A-Z][A-Za-z0-9_-]{1,40})(?=[,.:]|\s+(?:an?|the)\s)",
+        r"(?:i'm building|i am building|my product is|called)\s+(?:an?\s+)?(.+?)(?=\s+(?:at|for|that|which|with)\b|[,.:]|$)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            name = match.group(1).strip(" -–—\"'")
+            if 1 < len(name) <= 60:
+                return name
+    return ""
 
 
 def _detect_deep_research(message: str) -> str:
@@ -749,7 +770,7 @@ def _detect_deliverable_intent(message: str) -> str:
 
     competitor_kw = [
         "竞品", "竞争对手", "对手", "竞争者", "对比",
-        "competitor", "competing", "rival", "alternative", " vs ", "vs.",
+        "competitor", "competes", "competing", "rival", "alternative", " vs ", "vs.",
         "competitive analysis", "市场分析",
     ]
     content_kw = [
@@ -763,7 +784,7 @@ def _detect_deliverable_intent(message: str) -> str:
     ]
     full_kw = [
         "全套", "完整", "增长方案", "整体策略", "综合",
-        "full plan", "full strategy", "growth strategy", "complete plan",
+        "full plan", "full strategy", "growth strategy", "complete plan", "complete growth plan",
     ]
 
     has_competitor = any(kw in msg for kw in competitor_kw)

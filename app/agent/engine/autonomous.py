@@ -16,6 +16,7 @@ CrabRes Autonomous Decision Chain — Agent 自主决策能力
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
 
@@ -79,11 +80,14 @@ class AutonomousEngine:
     4. 用户可以设置"自动批准"规则（如"Reddit发帖自动批准"）
     """
 
-    def __init__(self, memory=None):
+    def __init__(self, memory=None, base_dir: str | Path | None = None):
         self.memory = memory
+        self._base_dir = Path(base_dir or ".crabres/autonomous")
+        self._base_dir.mkdir(parents=True, exist_ok=True)
         self._pending: list[PendingAction] = []
         self._auto_rules: dict[str, bool] = {}  # action_type → auto_approve
         self._load_rules()
+        self._load_pending()
 
     def can_auto_execute(self, action_type: str, trust_level: str = "cautious") -> bool:
         """判断某个操作是否可以自动执行"""
@@ -156,8 +160,7 @@ class AutonomousEngine:
         return dict(self._auto_rules)
 
     def _save_pending(self):
-        from pathlib import Path
-        path = Path(".crabres/autonomous/pending.json")
+        path = self._base_dir / "pending.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         data = [
             {
@@ -171,16 +174,24 @@ class AutonomousEngine:
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
 
     def _save_rules(self):
-        from pathlib import Path
-        path = Path(".crabres/autonomous/rules.json")
+        path = self._base_dir / "rules.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self._auto_rules, indent=2))
 
     def _load_rules(self):
-        from pathlib import Path
-        path = Path(".crabres/autonomous/rules.json")
+        path = self._base_dir / "rules.json"
         if path.exists():
             try:
                 self._auto_rules = json.loads(path.read_text())
             except Exception:
                 pass
+
+    def _load_pending(self):
+        path = self._base_dir / "pending.json"
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text())
+            self._pending = [PendingAction(**item) for item in data]
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning("Failed to load pending approvals from %s: %s", path, exc)

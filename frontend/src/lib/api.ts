@@ -11,6 +11,27 @@ export function getToken(): string | null { return localStorage.getItem('crabres
 export function setToken(token: string) { localStorage.setItem('crabres_token', token) }
 export function clearToken() { localStorage.removeItem('crabres_token') }
 
+class ApiResponseError extends Error {
+  constructor(public status: number, message: string) {
+    super(message)
+    this.name = 'ApiResponseError'
+  }
+}
+
+function errorMessage(detail: unknown, fallback: string): string {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map(item => typeof item?.msg === 'string' ? item.msg : '')
+      .filter(Boolean)
+      .join('; ') || fallback
+  }
+  if (detail && typeof detail === 'object' && 'message' in detail) {
+    return String((detail as { message: unknown }).message)
+  }
+  return fallback
+}
+
 let _onAuthExpired: (() => void) | null = null
 export function setAuthExpiredHandler(fn: () => void) { _onAuthExpired = fn }
 
@@ -51,18 +72,21 @@ export async function api<T = any>(path: string, opts?: RequestInit): Promise<T>
       if (res.status === 401) {
         clearToken()
         _onAuthExpired?.()
-        throw new Error('Session expired')
+        throw new ApiResponseError(401, 'Session expired')
       }
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }))
-        throw new Error(err.detail || `API Error ${res.status}`)
+        throw new ApiResponseError(
+          res.status,
+          errorMessage(err.detail, `Request failed (${res.status})`),
+        )
       }
       const text = await res.text()
       return text ? JSON.parse(text) : ({} as T)
     } catch (e: any) {
       lastError = e
       // 只对网络错误（冷启动）重试，业务错误不重试
-      if (e.message === 'Session expired' || e.message?.startsWith('API Error')) {
+      if (e instanceof ApiResponseError) {
         _onColdStart?.(false)
         throw e
       }
@@ -75,4 +99,25 @@ export async function api<T = any>(path: string, opts?: RequestInit): Promise<T>
   }
 
   throw lastError || new Error('Unknown error')
+}
+
+/** Fetch an authenticated binary asset and expose it as a temporary browser URL. */
+export async function apiBlobUrl(path: string): Promise<string> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(`${API}${path}`, { headers })
+  if (res.status === 401) {
+    clearToken()
+    _onAuthExpired?.()
+    throw new ApiResponseError(401, 'Session expired')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new ApiResponseError(
+      res.status,
+      errorMessage(err.detail, `Request failed (${res.status})`),
+    )
+  }
+  return URL.createObjectURL(await res.blob())
 }

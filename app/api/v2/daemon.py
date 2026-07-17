@@ -12,7 +12,7 @@ Endpoints:
 
 import logging
 from fastapi import APIRouter, Depends, Request
-from app.core.security import get_current_user
+from app.core.security import require_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/daemon", tags=["Growth Daemon"])
@@ -27,7 +27,7 @@ def _get_daemon(request: Request):
 
 
 @router.get("/status")
-async def daemon_status(request: Request, current_user: dict = Depends(get_current_user)):
+async def daemon_status(request: Request, _admin: dict = Depends(require_admin)):
     """Get daemon status, scheduler details, and pending discoveries"""
     daemon = _get_daemon(request)
     if not daemon:
@@ -42,7 +42,7 @@ async def daemon_status(request: Request, current_user: dict = Depends(get_curre
 
 
 @router.post("/start")
-async def start_daemon(request: Request, current_user: dict = Depends(get_current_user)):
+async def start_daemon(request: Request, _admin: dict = Depends(require_admin)):
     """Start the Growth Daemon"""
     daemon = _get_daemon(request)
     if not daemon:
@@ -56,7 +56,7 @@ async def start_daemon(request: Request, current_user: dict = Depends(get_curren
 
 
 @router.post("/stop")
-async def stop_daemon(request: Request, current_user: dict = Depends(get_current_user)):
+async def stop_daemon(request: Request, _admin: dict = Depends(require_admin)):
     """Stop the Growth Daemon"""
     daemon = _get_daemon(request)
     if not daemon:
@@ -67,7 +67,7 @@ async def stop_daemon(request: Request, current_user: dict = Depends(get_current
 
 
 @router.post("/tick")
-async def force_tick(request: Request, current_user: dict = Depends(get_current_user)):
+async def force_tick(request: Request, _admin: dict = Depends(require_admin)):
     """Force a daemon tick (for testing)"""
     daemon = _get_daemon(request)
     if not daemon:
@@ -84,7 +84,7 @@ async def force_tick(request: Request, current_user: dict = Depends(get_current_
 
 
 @router.post("/dream")
-async def force_dream(request: Request, current_user: dict = Depends(get_current_user)):
+async def force_dream(request: Request, _admin: dict = Depends(require_admin)):
     """Force a Growth Dream (memory distillation)"""
     daemon = _get_daemon(request)
     if not daemon:
@@ -95,7 +95,7 @@ async def force_dream(request: Request, current_user: dict = Depends(get_current
 
 
 @router.get("/discoveries")
-async def get_discoveries(request: Request, current_user: dict = Depends(get_current_user)):
+async def get_discoveries(request: Request, _admin: dict = Depends(require_admin)):
     """Get and clear pending discoveries"""
     daemon = _get_daemon(request)
     if not daemon:

@@ -273,6 +273,15 @@ def _build_builtin_checks(engine: AssertionEngine) -> None:
         m = ctx.get("metrics", {})
         return m.get("llm_calls", 0) == 0
 
+    async def _check_mode_is_quick(ctx) -> bool:
+        return getattr(ctx.get("result"), "mode", "") == "quick"
+
+    async def _check_mode_is_pipeline(ctx) -> bool:
+        return getattr(ctx.get("result"), "mode", "") == "pipeline"
+
+    async def _check_intent_is_growth_request(ctx) -> bool:
+        return getattr(ctx.get("result"), "intent", "") == "growth_request"
+
     async def _check_has_product_info_set(ctx) -> bool:
         result = ctx.get("result")
         if hasattr(result, "product_info"):
@@ -475,6 +484,9 @@ def _build_builtin_checks(engine: AssertionEngine) -> None:
 
     # 注册所有内置检查
     checks = {
+        "mode_is_quick": _check_mode_is_quick,
+        "mode_is_pipeline": _check_mode_is_pipeline,
+        "intent_is_growth_request": _check_intent_is_growth_request,
         "no_llm_called": _check_no_llm_called,
         "has_product_info_set": _check_has_product_info_set,
         "expert_id_extracted": _check_expert_id_extracted,

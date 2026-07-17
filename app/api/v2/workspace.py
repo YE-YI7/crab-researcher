@@ -9,7 +9,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.core.security import require_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workspace", tags=["Workspace"])
@@ -20,32 +22,52 @@ router = APIRouter(prefix="/workspace", tags=["Workspace"])
 import os as _os
 _render_disk = _os.environ.get("RENDER_DISK_PATH", "")
 if _render_disk:
-    WORKSPACE_BASE = Path(_render_disk) / "workspace"
-    WORKSPACE_FALLBACK = Path(".crabres/memory/workspace")  # 容器内备用
+    WORKSPACE_ROOT = Path(_render_disk) / "workspace"
+    WORKSPACE_FALLBACK_ROOT = Path(".crabres/memory")
 else:
-    WORKSPACE_BASE = Path(".crabres/memory/workspace")
-    WORKSPACE_FALLBACK = None
+    WORKSPACE_ROOT = Path(".crabres/memory")
+    WORKSPACE_FALLBACK_ROOT = None
 
-# 确保目录存在
-WORKSPACE_BASE.mkdir(parents=True, exist_ok=True)
+WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 
 
-def _safe_path(rel_path: str) -> Path:
+def _workspace_base(user_id: int) -> Path:
+    base = WORKSPACE_ROOT / str(user_id)
+    if not _render_disk:
+        base = base / "workspace"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _workspace_fallback(user_id: int) -> Optional[Path]:
+    if not WORKSPACE_FALLBACK_ROOT:
+        return None
+    return WORKSPACE_FALLBACK_ROOT / str(user_id) / "workspace"
+
+
+def _safe_path(user_id: int, rel_path: str) -> Path:
     """防止路径穿越攻击"""
-    resolved = (WORKSPACE_BASE / rel_path).resolve()
-    if not str(resolved).startswith(str(WORKSPACE_BASE.resolve())):
+    base = _workspace_base(user_id).resolve()
+    resolved = (base / rel_path).resolve()
+    if os.path.commonpath((base, resolved)) != str(base):
         raise HTTPException(status_code=403, detail="Access denied")
     return resolved
 
 
 @router.get("/files")
-async def list_files(path: str = Query("", description="子目录路径")):
+async def list_files(
+    path: str = Query("", description="子目录路径"),
+    current_user: dict = Depends(require_user),
+):
     """列出 workspace 中的文件和目录"""
-    target = _safe_path(path)
+    user_id = current_user["user_id"]
+    workspace_base = _workspace_base(user_id)
+    target = _safe_path(user_id, path)
     if not target.exists():
         # 尝试从容器内路径恢复（Render Disk 可能还没同步）
-        if WORKSPACE_FALLBACK:
-            fallback_target = (WORKSPACE_FALLBACK / path).resolve()
+        fallback = _workspace_fallback(user_id)
+        if fallback:
+            fallback_target = (fallback / path).resolve()
             if fallback_target.exists():
                 import shutil
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +86,7 @@ async def list_files(path: str = Query("", description="子目录路径")):
             stat = entry.stat()
             items.append({
                 "name": entry.name,
-                "path": str(entry.relative_to(WORKSPACE_BASE)),
+                "path": str(entry.relative_to(workspace_base)),
                 "type": "directory" if entry.is_dir() else "file",
                 "size": stat.st_size if entry.is_file() else None,
                 "modified": stat.st_mtime,
@@ -77,9 +99,10 @@ async def list_files(path: str = Query("", description="子目录路径")):
 
 
 @router.get("/files/tree")
-async def file_tree():
+async def file_tree(current_user: dict = Depends(require_user)):
     """递归获取完整文件树"""
-    if not WORKSPACE_BASE.exists():
+    workspace_base = _workspace_base(current_user["user_id"])
+    if not workspace_base.exists():
         return {"tree": []}
 
     def _walk(dir_path: Path, depth: int = 0) -> list:
@@ -92,7 +115,7 @@ async def file_tree():
                     continue
                 node = {
                     "name": entry.name,
-                    "path": str(entry.relative_to(WORKSPACE_BASE)),
+                    "path": str(entry.relative_to(workspace_base)),
                     "type": "directory" if entry.is_dir() else "file",
                 }
                 if entry.is_file():
@@ -105,20 +128,24 @@ async def file_tree():
             pass
         return result
 
-    return {"tree": _walk(WORKSPACE_BASE)}
+    return {"tree": _walk(workspace_base)}
 
 
 @router.get("/files/read")
-async def read_file(path: str = Query(..., description="文件相对路径")):
+async def read_file(
+    path: str = Query(..., description="文件相对路径"),
+    current_user: dict = Depends(require_user),
+):
     """读取单个文件内容（支持从 memory 备份恢复）"""
-    target = _safe_path(path)
+    user_id = current_user["user_id"]
+    target = _safe_path(user_id, path)
     
     # 如果文件不存在，尝试从 memory 备份恢复
     if not target.exists() or not target.is_file():
-        recovered = await _try_recover_from_memory(path)
+        recovered = await _try_recover_from_memory(user_id, path)
         if recovered:
             # 恢复成功，重新读取
-            target = _safe_path(path)
+            target = _safe_path(user_id, path)
         if not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail="File not found")
 
@@ -159,9 +186,12 @@ async def read_file(path: str = Query(..., description="文件相对路径")):
 
 
 @router.delete("/files")
-async def delete_file(path: str = Query(..., description="文件相对路径")):
+async def delete_file(
+    path: str = Query(..., description="文件相对路径"),
+    current_user: dict = Depends(require_user),
+):
     """删除单个文件"""
-    target = _safe_path(path)
+    target = _safe_path(current_user["user_id"], path)
     if not target.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -173,50 +203,46 @@ async def delete_file(path: str = Query(..., description="文件相对路径")):
         raise HTTPException(status_code=500, detail=f"Failed to delete: {e}")
 
 
-async def _try_recover_from_memory(rel_path: str) -> bool:
+async def _try_recover_from_memory(user_id: int, rel_path: str) -> bool:
     """尝试从 memory 备份中恢复文件"""
     try:
-        # 扫描所有用户的 memory 目录，查找备份的文件内容
-        memory_root = Path(".crabres/memory")
-        if not memory_root.exists():
+        user_dir = Path(".crabres/memory") / str(user_id)
+        if not user_dir.exists():
             return False
-        
-        for user_dir in memory_root.iterdir():
-            if not user_dir.is_dir() or user_dir.name == "workspace":
-                continue
-            # 检查 workspace_backup 分类
-            backup_file = user_dir / "workspace_backup" / rel_path.replace("/", "_") + ".json"
-            if backup_file.exists():
-                import json
-                data = json.loads(backup_file.read_text(encoding="utf-8"))
-                content = data.get("content", "")
-                if content:
-                    target = WORKSPACE_BASE / rel_path
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(content, encoding="utf-8")
-                    logger.info(f"Recovered workspace file from memory backup: {rel_path}")
-                    return True
+
+        backup_file = user_dir / "workspace_backup" / f"{rel_path.replace('/', '_')}.json"
+        if backup_file.exists():
+            import json
+            data = json.loads(backup_file.read_text(encoding="utf-8"))
+            content = data.get("content", "")
+            if content:
+                target = _safe_path(user_id, rel_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+                logger.info(f"Recovered workspace file from memory backup: {rel_path}")
+                return True
     except Exception as e:
         logger.warning(f"Failed to recover file from memory: {e}")
     return False
 
 
 @router.get("/stats")
-async def workspace_stats():
+async def workspace_stats(current_user: dict = Depends(require_user)):
     """workspace 统计信息"""
-    if not WORKSPACE_BASE.exists():
+    workspace_base = _workspace_base(current_user["user_id"])
+    if not workspace_base.exists():
         return {"total_files": 0, "total_size": 0, "categories": {}}
 
     total_files = 0
     total_size = 0
     categories: dict = {}
 
-    for f in WORKSPACE_BASE.rglob("*"):
+    for f in workspace_base.rglob("*"):
         if f.is_file() and not f.name.startswith("."):
             total_files += 1
             total_size += f.stat().st_size
             # 按父目录分类
-            cat = f.parent.name if f.parent != WORKSPACE_BASE else "root"
+            cat = f.parent.name if f.parent != workspace_base else "root"
             categories[cat] = categories.get(cat, 0) + 1
 
     return {

@@ -20,8 +20,8 @@ import type { CreatureState } from './components/creature/types'
 
 // ====== 登录页（简洁版，后续丰富）======
 
-function AuthPage({ onLogin }: { onLogin: () => void }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+function AuthPage({ onLogin, initialMode = 'login' }: { onLogin: () => void; initialMode?: 'login' | 'register' }) {
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [company, setCompany] = useState('')
@@ -181,6 +181,7 @@ function AuthPage({ onLogin }: { onLogin: () => void }) {
 export default function App() {
   const [authed, setAuthed] = useState(!!getToken())
   const [showAuth, setShowAuth] = useState(false)
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('register')
   const [showCompare, setShowCompare] = useState(false)
   const [onboarded, setOnboarded] = useState(!!localStorage.getItem('crabres_onboarded'))
   const [page, setPage] = useState<'surface' | 'chat' | 'plan' | 'dashboard' | 'settings'>('surface')
@@ -207,14 +208,6 @@ export default function App() {
         setAuthed(true)
         window.history.replaceState({}, '', window.location.pathname)
       }
-    }
-    // 兼容旧的 ?token= 格式
-    const params = new URLSearchParams(window.location.search)
-    const qToken = params.get('token')
-    if (qToken) {
-      setToken(qToken)
-      setAuthed(true)
-      window.history.replaceState({}, '', window.location.pathname)
     }
   }, [])
 
@@ -246,12 +239,12 @@ export default function App() {
 
   if (!authed) {
     if (showAuth) {
-      return <>{ColdStartBanner}<AuthPage onLogin={() => { setAuthed(true); setShowAuth(false) }} /></>
+      return <>{ColdStartBanner}<AuthPage initialMode={authMode} onLogin={() => { setAuthed(true); setShowAuth(false) }} /></>
     }
     if (showCompare) {
-      return <Compare onGetStarted={() => { setShowCompare(false); setShowAuth(true) }} onBack={() => setShowCompare(false)} />
+      return <Compare onGetStarted={() => { setShowCompare(false); setAuthMode('register'); setShowAuth(true) }} onBack={() => setShowCompare(false)} />
     }
-    return <Landing onGetStarted={() => setShowAuth(true)} onLogin={() => setShowAuth(true)} onCompare={() => setShowCompare(true)} />
+    return <Landing onGetStarted={() => { setAuthMode('register'); setShowAuth(true) }} onLogin={() => { setAuthMode('login'); setShowAuth(true) }} onCompare={() => setShowCompare(true)} />
   }
 
   // 未完成 onboarding
