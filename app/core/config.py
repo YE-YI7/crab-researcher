@@ -3,6 +3,7 @@ CrabRes 配置管理
 """
 
 import secrets
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import Optional, List
@@ -17,8 +18,13 @@ class Settings(BaseSettings):
     APP_NAME: str = "CrabRes"
     APP_VERSION: str = "5.1.0"
     DEBUG: bool = False
+    ENVIRONMENT: str = "development"
     API_PREFIX: str = "/api"
     FRONTEND_URL: str = "https://crab-researcher.vercel.app"
+    ENABLE_GLOBAL_DAEMON: bool = False
+    # Keep publishing/email/browser side effects off until credentials are
+    # stored per tenant and a durable audit log is in place.
+    ENABLE_REAL_WORLD_EXECUTION: bool = False
 
     # ========== 数据库 ==========
     DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/crab_researcher"
@@ -61,9 +67,17 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_ID: Optional[str] = None
 
     # ========== 安全 ==========
-    JWT_SECRET: str = "change-me-in-production"
-    API_KEY: str = "change-me-in-production"
+    # Development gets an ephemeral secret instead of a publicly known default.
+    # Production must explicitly provide stable, strong values (validated below).
+    JWT_SECRET: str = Field(default_factory=_generate_secret)
+    API_KEY: Optional[str] = None
+    ADMIN_API_KEY: Optional[str] = None
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
+
+    # External inbound events use dedicated credentials. They must never share
+    # the user-facing JWT or general API key.
+    GITHUB_WEBHOOK_SECRET: Optional[str] = None
+    GENERIC_WEBHOOK_TOKEN: Optional[str] = None
 
     # ========== OAuth ==========
     GOOGLE_CLIENT_ID: Optional[str] = None
@@ -114,6 +128,15 @@ class Settings(BaseSettings):
     ]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self):
+        if self.ENVIRONMENT.lower() in {"production", "prod"}:
+            if len(self.JWT_SECRET) < 32 or self.JWT_SECRET == "change-me-in-production":
+                raise ValueError("JWT_SECRET must be an explicit secret of at least 32 characters in production")
+            if not self.ADMIN_API_KEY or len(self.ADMIN_API_KEY) < 32:
+                raise ValueError("ADMIN_API_KEY must be configured with at least 32 characters in production")
+        return self
 
 
 @lru_cache()

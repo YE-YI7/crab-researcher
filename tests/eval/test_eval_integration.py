@@ -6,6 +6,7 @@ CrabRes L1 Eval — 集成测试
 """
 
 import pytest
+from pathlib import Path
 
 
 class TestEvalSystemIntegration:
@@ -100,7 +101,7 @@ class TestLLMJudgeIntegration:
         import asyncio
 
         judge = LLMJudge(llm_service=None)
-        result = asyncio.get_event_loop().run_until_complete(judge.evaluate(
+        result = asyncio.run(judge.evaluate(
             user_message="test",
             assistant_response="test response",
         ))

@@ -1,8 +1,8 @@
 /**
- * Onboarding — 3步引导流
+ * Onboarding — 4步引导流
  * 
  * 注册后进入。收集产品信息，生成生物体，开始研究。
- * 不超过 2 分钟。每步都可跳过。
+ * 只收集生成第一份有证据增长扫描所需的信息。
  */
 
 import { useState } from 'react'
@@ -48,17 +48,17 @@ const BUDGETS = [
 const MARKETS = [
   { 
     value: 'global', 
-    label: 'Global Market (Voyager)', 
+    label: 'English-speaking markets',
     icon: '🌐',
-    desc: 'Focus on "Build in Public", creative speed, and global early adopters.',
-    aha: 'Your 90-day "Copy-Paste" Growth Roadmap will be ready in 2 minutes.'
+    desc: 'Research English-language communities, competitors, and early adopters.',
+    aha: 'Your first scan starts only after you confirm below.'
   },
   { 
     value: 'domestic', 
-    label: 'Domestic & Overseas (Money-Maker)', 
+    label: 'Chinese & international markets',
     icon: '◇',
-    desc: '专注变现、出海 (Going Overseas) 和挖掘海外盈利机会。',
-    aha: '帮你挖掘海外市场的真实需求，赚到第一个 $1,000。'
+    desc: '研究中文市场、出海机会和海外用户需求。',
+    aha: '确认后才会开始真实研究，不会预先生成通用结论。'
   },
 ]
 
@@ -72,6 +72,7 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
   const [userGoal, setUserGoal] = useState('')
   const [budget, setBudget] = useState('')
   const [loading, setLoading] = useState(false)
+  const [startError, setStartError] = useState<string | null>(null)
   const [creature, setCreature] = useState<CreatureState | null>(null)
 
   const handleStep1Next = () => {
@@ -80,10 +81,12 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
   }
 
   const handleStep2Next = () => {
+    if (!productDesc.trim() || !productType) return
     setStep(3)
   }
 
   const handleStep3Next = () => {
+    if (!userGoal || !budget) return
     setStep(4)
     // 生成生物体
     const c = generateCreature(userId, productType || 'default')
@@ -94,6 +97,7 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
 
   const handleFinish = async () => {
     setLoading(true)
+    setStartError(null)
     const productData = {
       name: productName,
       market,
@@ -112,8 +116,10 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
           message: `My product is called "${productName}". Market focus: ${market}. ${productDesc ? `It's ${productDesc}.` : ''} ${productUrl ? `URL: ${productUrl}.` : ''} Product type: ${productType || 'not specified'}. Goal: ${userGoal || 'not set'} users in 3 months. Monthly budget: $${budget || '0'}.`,
         }),
       })
-    } catch (e) {
-      // 即使 API 失败也继续
+    } catch (e: any) {
+      setStartError(e?.message || 'Could not start the first research scan. Please try again.')
+      setLoading(false)
+      return
     }
 
     const c = creature || generateCreature(userId, productType || 'default')
@@ -156,7 +162,8 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
               {MARKETS.map(m => (
                 <button
                   key={m.value}
-                  onClick={() => setMarket(m.value)}
+                onClick={() => setMarket(m.value)}
+                  aria-pressed={market === m.value}
                   className={`w-full p-4 rounded-xl text-left border transition-all ${
                     market === m.value
                       ? 'border-brand bg-brand/10 shadow-glow'
@@ -206,7 +213,7 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
             <div className="space-y-3 text-left">
               <div>
                 <label className="text-xs font-medium text-secondary mb-1 block">
-                  {market === 'global' ? 'What does it do?' : '它是做什么的？'}
+                  {market === 'global' ? 'What does it do? *' : '它是做什么的？ *'}
                 </label>
                 <input
                   className="w-full"
@@ -228,13 +235,14 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
               </div>
               <div>
                 <label className="text-xs font-medium text-secondary mb-1 block">
-                  {market === 'global' ? 'Product type' : '产品类型'}
+                  {market === 'global' ? 'Product type *' : '产品类型 *'}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {PRODUCT_TYPES.map(t => (
                     <button
                       key={t.value}
                       onClick={() => setProductType(t.value)}
+                      aria-pressed={productType === t.value}
                       className={`p-2.5 rounded-xl text-left text-sm border transition-all ${
                         productType === t.value
                           ? 'border-brand bg-brand/10 text-brand font-bold'
@@ -252,7 +260,8 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
               <button onClick={() => setStep(1)} className="btn-ghost flex-1 !py-3">
                 {market === 'global' ? '← Back' : '← 返回'}
               </button>
-              <button onClick={handleStep2Next} className="btn-primary flex-1 !py-3">
+              <button onClick={handleStep2Next} disabled={!productDesc.trim() || !productType}
+                className="btn-primary flex-1 !py-3 disabled:opacity-40">
                 {market === 'global' ? 'Next →' : '下一步 →'}
               </button>
             </div>
@@ -273,13 +282,14 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
             <div className="space-y-4 text-left">
               <div>
                 <label className="text-xs font-medium text-secondary mb-2 block">
-                  {market === 'global' ? 'Target users in 3 months' : '3 个月内的目标用户数'}
+                  {market === 'global' ? 'Target users in 3 months *' : '3 个月内的目标用户数 *'}
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {USER_GOALS.map(g => (
                     <button
                       key={g.value}
                       onClick={() => setUserGoal(g.value)}
+                      aria-pressed={userGoal === g.value}
                       className={`px-4 py-2 rounded-xl text-sm border transition-all ${
                         userGoal === g.value
                           ? 'border-brand bg-brand/5 text-brand font-medium'
@@ -294,13 +304,14 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
 
               <div>
                 <label className="text-xs font-medium text-secondary mb-2 block">
-                  {market === 'global' ? 'Monthly marketing budget' : '月度营销预算'}
+                  {market === 'global' ? 'Monthly marketing budget *' : '月度营销预算 *'}
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {BUDGETS.map(b => (
                     <button
                       key={b.value}
                       onClick={() => setBudget(b.value)}
+                      aria-pressed={budget === b.value}
                       className={`px-4 py-2 rounded-xl text-sm border transition-all ${
                         budget === b.value
                           ? 'border-brand bg-brand/5 text-brand font-medium'
@@ -318,7 +329,8 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
               <button onClick={() => setStep(2)} className="btn-ghost flex-1 !py-3">
                 {market === 'global' ? '← Back' : '← 返回'}
               </button>
-              <button onClick={handleStep3Next} className="btn-primary flex-1 !py-3">
+              <button onClick={handleStep3Next} disabled={!userGoal || !budget}
+                className="btn-primary flex-1 !py-3 disabled:opacity-40">
                 {market === 'global' ? 'Next →' : '下一步 →'}
               </button>
             </div>
@@ -333,8 +345,8 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
             </h2>
             <p className="text-sm text-muted mb-6">
               {market === 'global' 
-                ? 'Assembling your 13-expert growth team...' 
-                : '正在集结你的 13 位专家增长团...'}
+                ? 'Review the team configured for your first scan.'
+                : '确认将参与首次扫描的专家配置。'}
             </p>
 
             <div className="mb-4">
@@ -349,8 +361,8 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
               </p>
               <p className="text-sm text-muted mt-1 px-4">
                 {market === 'global' 
-                  ? 'Currently scanning Reddit to find your early adopters.'
-                  : '正在为你扫描全球市场的盈利机会。'}
+                  ? 'Research has not started yet. Continue to begin an evidence-backed market scan.'
+                  : '研究尚未开始。确认后将启动基于真实来源的市场扫描。'}
               </p>
             </div>
 
@@ -364,14 +376,18 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
               ].map((expert, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs animate-fade-in"
                   style={{ animationDelay: `${i * 100}ms`, opacity: 0, animationFillMode: 'forwards' }}>
-                  <span className="text-brand">✓</span>
+                  <span className="text-brand">·</span>
                   <span className="text-secondary">{expert}</span>
                   <span className="text-muted">
-                    {market === 'global' ? 'ready' : '就绪'}
+                    {market === 'global' ? 'configured' : '已配置'}
                   </span>
                 </div>
               ))}
             </div>
+
+            {startError && (
+              <p role="alert" className="text-sm text-red-500 mb-3">{startError}</p>
+            )}
 
             <button onClick={handleFinish} disabled={loading}
               className="btn-primary w-full !py-3 disabled:opacity-60">

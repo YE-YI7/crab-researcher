@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { api } from '../../lib/api'
+import { api, apiBlobUrl } from '../../lib/api'
 import {
   FolderIcon, FileTextIcon, FileCodeIcon, CloseIcon,
   TerminalIcon, GlobeSmallIcon, TrashIcon, RefreshIcon,
@@ -69,6 +69,28 @@ export function Workspace({ visible, initialFile, logs = [], refreshKey = 0, bro
   const [loading, setLoading] = useState(false)
   const [bottomTab, setBottomTab] = useState<'files' | 'terminal' | 'preview'>('files')
   const [stats, setStats] = useState<any>(null)
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    const screenshotPath = browserState?.screenshotPath
+    if (!visible || !screenshotPath) {
+      setScreenshotUrl(null)
+      return
+    }
+    let active = true
+    let objectUrl: string | null = null
+    const filename = screenshotPath.split('/').pop()
+    apiBlobUrl(`/workspace/files/read?path=${encodeURIComponent(`assets/${filename}`)}`)
+      .then(url => {
+        objectUrl = url
+        if (active) setScreenshotUrl(url)
+      })
+      .catch(() => active && setScreenshotUrl(null))
+    return () => {
+      active = false
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [visible, browserState?.screenshotPath])
 
   // 加载文件树
   const loadTree = useCallback(async () => {
@@ -343,10 +365,10 @@ export function Workspace({ visible, initialFile, logs = [], refreshKey = 0, bro
                         )}
                       </div>
                       <p className="text-[10px] text-muted font-mono truncate">{browserState.url}</p>
-                      {browserState.screenshotPath && (
+                      {screenshotUrl && (
                         <div className="rounded-lg border border-border overflow-hidden bg-white">
                           <img
-                            src={`/api/workspace/files/read?path=assets/${browserState.screenshotPath.split('/').pop()}`}
+                            src={screenshotUrl}
                             alt="Screenshot"
                             className="w-full h-auto"
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}

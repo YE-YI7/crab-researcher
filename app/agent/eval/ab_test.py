@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 
 class TestStatus(str, Enum):
+    __test__ = False
     DRAFT = "draft"
     RUNNING = "running"
     PAUSED = "paused"
@@ -481,7 +482,7 @@ class ABTestManager:
         min_n = test.min_sample_size
 
         if total < min_n:
-            return f"Collecting samples ({total}/{min_n_n}). Not enough data yet."
+            return f"Collecting samples ({total}/{min_n}). Not enough data yet."
 
         if not is_sig:
             return (

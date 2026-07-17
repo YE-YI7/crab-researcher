@@ -16,10 +16,11 @@ import logging
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Request, Header, HTTPException
+from fastapi import APIRouter, Depends, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
+from app.core.security import require_admin
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -39,12 +40,19 @@ async def github_webhook(
     转化为 EventBus 事件供 Daemon 消费
     """
     body = await request.body()
-    payload = json.loads(body)
-
-    # 签名验证（如果配置了 webhook secret）
-    # TODO: 从 .env 读取 GITHUB_WEBHOOK_SECRET
-    # if x_hub_signature_256:
-    #     _verify_github_signature(body, x_hub_signature_256)
+    if not settings.GITHUB_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="GitHub webhook is not configured")
+    if not x_hub_signature_256:
+        raise HTTPException(status_code=401, detail="Missing GitHub signature")
+    expected = "sha256=" + hmac.new(
+        settings.GITHUB_WEBHOOK_SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, x_hub_signature_256):
+        raise HTTPException(status_code=401, detail="Invalid GitHub signature")
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
     event_type = x_github_event or "unknown"
     action = payload.get("action", "")
@@ -101,7 +109,10 @@ async def github_webhook(
 
 
 @router.post("/generic")
-async def generic_webhook(request: Request):
+async def generic_webhook(
+    request: Request,
+    x_webhook_token: Optional[str] = Header(None),
+):
     """
     通用 Webhook 接收器
 
@@ -111,6 +122,13 @@ async def generic_webhook(request: Request):
     POST /api/webhooks/generic
     Body: {"source": "zapier", "event": "new_signup", "data": {...}}
     """
+    if not settings.GENERIC_WEBHOOK_TOKEN:
+        raise HTTPException(status_code=503, detail="Generic webhook is not configured")
+    if not x_webhook_token or not hmac.compare_digest(
+        x_webhook_token, settings.GENERIC_WEBHOOK_TOKEN
+    ):
+        raise HTTPException(status_code=401, detail="Invalid webhook token")
+
     try:
         payload = await request.json()
     except Exception:
@@ -137,7 +155,11 @@ async def generic_webhook(request: Request):
 
 
 @router.get("/events")
-async def get_events(event_type: Optional[str] = None, limit: int = 20):
+async def get_events(
+    event_type: Optional[str] = None,
+    limit: int = 20,
+    _admin: dict = Depends(require_admin),
+):
     """
     获取最近的 Webhook 事件（调试用）
 
@@ -150,7 +172,11 @@ async def get_events(event_type: Optional[str] = None, limit: int = 20):
 
 
 @router.get("/events/stream")
-async def event_stream(request: Request, event_type: str = "*"):
+async def event_stream(
+    request: Request,
+    event_type: str = "*",
+    _admin: dict = Depends(require_admin),
+):
     """
     SSE 事件流 — 前端实时接收所有事件
 

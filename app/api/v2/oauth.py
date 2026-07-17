@@ -5,12 +5,13 @@ CrabRes OAuth — Google + GitHub 一键登录
 """
 
 import logging
+from datetime import timedelta
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from app.core.config import get_settings
-from app.core.security import create_access_token
+from app.core.security import create_access_token, verify_token
 from app.core.database import AsyncSessionLocal
 from app.models.task import User
 from sqlalchemy import select
@@ -21,6 +22,21 @@ router = APIRouter(prefix="/oauth", tags=["OAuth"])
 
 # 前端回调 URL（从配置读取）
 FRONTEND_URL = settings.FRONTEND_URL
+
+
+def _oauth_state(provider: str) -> str:
+    return create_access_token(
+        {"scope": "oauth_state", "provider": provider},
+        expires_delta=timedelta(minutes=10),
+    )
+
+
+def _verify_oauth_state(state: str | None, provider: str) -> None:
+    if not state:
+        raise HTTPException(400, "Missing OAuth state")
+    payload = verify_token(state)
+    if payload.get("scope") != "oauth_state" or payload.get("provider") != provider:
+        raise HTTPException(400, "Invalid OAuth state")
 
 
 # ====== Google OAuth ======
@@ -40,7 +56,9 @@ async def google_login(request: Request):
 
     redirect_uri = str(request.url_for("google_callback"))
     client = AsyncOAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirect_uri=redirect_uri)
-    uri, state = client.create_authorization_url(GOOGLE_AUTH_URL, scope="openid email profile")
+    uri, _ = client.create_authorization_url(
+        GOOGLE_AUTH_URL, scope="openid email profile", state=_oauth_state("google")
+    )
     return RedirectResponse(uri)
 
 
@@ -49,6 +67,7 @@ async def google_callback(request: Request):
     """Google 授权回调"""
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(400, "Google OAuth not configured")
+    _verify_oauth_state(request.query_params.get("state"), "google")
 
     redirect_uri = str(request.url_for("google_callback"))
     client = AsyncOAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirect_uri=redirect_uri)
@@ -64,7 +83,7 @@ async def google_callback(request: Request):
         raise HTTPException(400, "Could not get email from Google")
 
     jwt_token = await _get_or_create_user(email, name, "google")
-    return RedirectResponse(f"{FRONTEND_URL}?token={jwt_token}")
+    return RedirectResponse(f"{FRONTEND_URL}#token={jwt_token}")
 
 
 # ====== GitHub OAuth ======
@@ -85,7 +104,9 @@ async def github_login(request: Request):
 
     redirect_uri = str(request.url_for("github_callback"))
     client = AsyncOAuth2Client(GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, redirect_uri=redirect_uri)
-    uri, state = client.create_authorization_url(GITHUB_AUTH_URL, scope="user:email")
+    uri, _ = client.create_authorization_url(
+        GITHUB_AUTH_URL, scope="user:email", state=_oauth_state("github")
+    )
     return RedirectResponse(uri)
 
 
@@ -94,6 +115,7 @@ async def github_callback(request: Request):
     """GitHub 授权回调"""
     if not GITHUB_CLIENT_ID:
         raise HTTPException(400, "GitHub OAuth not configured")
+    _verify_oauth_state(request.query_params.get("state"), "github")
 
     redirect_uri = str(request.url_for("github_callback"))
     client = AsyncOAuth2Client(GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, redirect_uri=redirect_uri)

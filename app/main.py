@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.database import engine, Base
-from app.models.growth_memory import MemoryRecord, JournalEntry  # 确保 create_all 发现新表
+import app.models  # noqa: F401  # register all ORM tables before create_all
 from app.api import auth, tasks, monitoring, reports, rag, system, competitors
 from app.api.v2 import agent as agent_v2
 from app.api.v2 import growth_data as growth_data_v2
@@ -34,6 +34,7 @@ from app.api.v2 import real_world as real_world_v2
 from app.api.v2 import notifications as notifications_v2
 from app.api.v2 import execution as execution_v2
 from app.api.v2 import workspace as workspace_v2
+from app.api.v2 import scans as scans_v2
 from app.channels.feishu_bot import router as feishu_router
 from app.channels.openclaw_skill import router as openclaw_router
 from app.channels.discord_bot import router as discord_router
@@ -77,6 +78,8 @@ async def lifespan(app: FastAPI):
     # Growth Daemon（容错启动）
     daemon = None
     try:
+        if not settings.ENABLE_GLOBAL_DAEMON:
+            raise RuntimeError("Global daemon disabled; use tenant-scoped jobs")
         tools = ToolRegistry()
         tools.register(WebSearchTool())
         tools.register(ScrapeWebsiteTool())
@@ -95,7 +98,7 @@ async def lifespan(app: FastAPI):
         await daemon.start()
         logging.info("🤖 Growth Daemon started")
     except Exception as e:
-        logging.warning(f"🤖 Growth Daemon init failed: {e}")
+        logging.info(f"🤖 Growth Daemon not started: {e}")
     app.state.growth_daemon = daemon
 
     # EventBus（容错启动）
@@ -202,6 +205,7 @@ app.include_router(real_world_v2.router, prefix=settings.API_PREFIX)
 app.include_router(notifications_v2.router, prefix=settings.API_PREFIX)
 app.include_router(execution_v2.router, prefix=settings.API_PREFIX)
 app.include_router(workspace_v2.router, prefix=settings.API_PREFIX)
+app.include_router(scans_v2.router, prefix=settings.API_PREFIX)
 
 # 渠道路由
 app.include_router(feishu_router, prefix=settings.API_PREFIX)

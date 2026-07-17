@@ -293,6 +293,9 @@ PRODUCT_EXPERT_PRIORITY: dict[str, dict[str, int]] = {
     },
 }
 
+# Public compatibility name used by the evaluation and inspection APIs.
+HARNESS_WEIGHTS = PRODUCT_EXPERT_PRIORITY
+
 # 专家发言依赖图：某些专家应该在其他专家之后发言
 # key 专家在 value 列表中的专家完成后才开始
 EXPERT_DEPENDENCIES: dict[str, list[str]] = {
@@ -349,6 +352,29 @@ def select_roundtable_experts(product_type: str, task: str, max_experts: int = 4
     
     logger.info(f"Harness: selected {selected} for product_type={product_type}, channels={channels}")
     return selected
+
+
+def get_experts_for_product(product_type: str, product_info: dict | None = None) -> list[str]:
+    """Stable public wrapper for deterministic product-to-expert selection."""
+    info = product_info or {}
+    task = " ".join(str(info.get(key, "")) for key in ("description", "audience", "goal"))
+    return select_roundtable_experts(product_type or "default", task, max_experts=4)
+
+
+def get_knowledge_modules_for_query(query: str) -> list[dict]:
+    """Return channel-specific knowledge module metadata for a query."""
+    channels = detect_relevant_channels(query)
+    if not channels:
+        return []
+    from app.agent.knowledge.skills_registry import EXPERT_KNOWLEDGE
+
+    modules = []
+    for items in EXPERT_KNOWLEDGE.values():
+        for item in items:
+            name = str(item.get("name", "")).lower()
+            if any(channel.replace("x_twitter", "twitter") in name for channel in channels):
+                modules.append(item)
+    return modules
 
 
 async def select_experts_with_llm_refinement(

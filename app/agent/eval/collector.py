@@ -44,7 +44,7 @@ class MetricsCollector:
     """JSONL-backed session metrics collector. Thread-safe enough for asyncio."""
 
     def __init__(self, base_dir: Optional[Path] = None):
-        self.base_dir = base_dir or _default_eval_dir()
+        self.base_dir = Path(base_dir) if base_dir is not None else _default_eval_dir()
         (self.base_dir / "sessions").mkdir(parents=True, exist_ok=True)
 
     # ===== write path =====

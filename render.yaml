@@ -32,3 +32,15 @@ services:
         sync: false
       - key: FRONTEND_URL
         value: "https://crab-researcher.vercel.app"
+      - key: ENVIRONMENT
+        value: "production"
+      - key: ENABLE_GLOBAL_DAEMON
+        value: "false"
+      - key: ENABLE_REAL_WORLD_EXECUTION
+        value: "false"
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: GENERIC_WEBHOOK_TOKEN
+        sync: false

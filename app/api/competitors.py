@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import require_user
 from app.models.task import UserProduct, CompetitorDiscovery, CompetitorProduct
 from app.models.schemas import (
     UserProductCreate, UserProductResponse,
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/competitors", tags=["竞品管理"])
 @router.post("/products", response_model=UserProductResponse, summary="创建用户产品")
 async def create_product(
     body: UserProductCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """创建你的产品信息，作为竞品管理的起点"""
@@ -48,7 +48,7 @@ async def create_product(
 
 @router.get("/products", response_model=list[UserProductResponse], summary="获取我的产品列表")
 async def list_products(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -66,7 +66,7 @@ async def list_products(
 async def add_competitor(
     product_id: int,
     body: CompetitorProductCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """用户自主输入竞品品牌和产品信息"""
@@ -82,7 +82,7 @@ async def add_competitor(
             summary="获取竞品列表")
 async def list_competitors(
     product_id: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取某产品下所有竞品（用户手动添加 + LLM发现后确认的）"""
@@ -97,7 +97,7 @@ async def list_competitors(
 async def update_competitor(
     competitor_id: int,
     body: CompetitorProductUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新竞品的品牌、价格、链接等信息"""
@@ -117,7 +117,7 @@ async def update_competitor(
                summary="删除竞品")
 async def delete_competitor(
     competitor_id: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """删除一个竞品"""
@@ -137,7 +137,7 @@ async def delete_competitor(
 @router.post("/products/{product_id}/discover", summary="[可选] LLM 自动发现竞品候选")
 async def discover_competitors(
     product_id: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -165,7 +165,7 @@ async def discover_competitors(
 async def get_candidates(
     product_id: int,
     status: str = Query(None, description="按状态筛选: pending / confirmed / rejected"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _get_user_product(db, product_id, current_user["user_id"])
@@ -179,7 +179,7 @@ async def get_candidates(
 async def update_candidate(
     candidate_id: int,
     body: CompetitorConfirmAction,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """确认(confirm)则自动添加到竞品列表，排除(reject)则忽略"""
@@ -205,7 +205,7 @@ async def update_candidate(
              summary="[可选] 批量确认所有 pending 候选")
 async def batch_confirm(
     product_id: int = Query(..., description="产品ID"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """一键确认某产品下所有 pending 状态的竞品候选"""

@@ -227,8 +227,8 @@ class TraceCollector:
         duration = time.time() - self._start_time
         self.record(
             EventType.PHASE_EXIT,
-            phase="session",
             duration_ms=duration * 1000,
+            metadata={"phase": "session"},
         )
         logger.info(f"[Trace] Session {self.session_id}: {len(self.events)} events, {duration:.1f}s")
 
@@ -269,6 +269,14 @@ class TraceCollector:
         """记录进入新阶段"""
         self._current_phase = phase
         return self.record(EventType.PHASE_ENTER, metadata={"phase": phase})
+
+    def record_phase_exit(self, phase: str | None = None):
+        """Record leaving a phase and clear the active phase marker."""
+        exiting = phase or self._current_phase
+        event = self.record(EventType.PHASE_EXIT, metadata={"phase": exiting})
+        if not phase or phase == self._current_phase:
+            self._current_phase = ""
+        return event
 
     def record_llm_call(
         self,
