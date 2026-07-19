@@ -42,6 +42,8 @@ export function Settings({ creature, onBack, onLogout }: SettingsProps) {
     localStorage.removeItem('crabres_onboarded')
     localStorage.removeItem('crabres_product_type')
     localStorage.removeItem('crabres_product_name')
+    localStorage.removeItem('crabres_product_id')
+    localStorage.removeItem('crabres_scan_id')
     onLogout()
   }
 
@@ -195,7 +197,7 @@ export function Settings({ creature, onBack, onLogout }: SettingsProps) {
             className="w-full p-3 rounded-md text-sm text-error font-medium hover:bg-red-50 transition-colors text-center">
             Log out
           </button>
-          <p className="text-xs text-muted text-center mt-4">CrabRes v2.0 · 13 experts · Made with 🦀</p>
+          <p className="text-xs text-muted text-center mt-4">CrabRes v2.0 · Evidence-backed research · Made with 🦀</p>
         </div>
       </div>
     </div>

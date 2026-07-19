@@ -168,7 +168,7 @@ function AuthPage({ onLogin, initialMode = 'login' }: { onLogin: () => void; ini
         {/* 背书 */}
         <div className="mt-8 text-center">
           <p className="text-xs text-muted">
-            Powered by 13 AI growth experts · 18 research frameworks
+            Evidence-backed research · Human-approved actions
           </p>
         </div>
       </div>
@@ -258,7 +258,10 @@ export default function App() {
           localStorage.setItem('crabres_product_type', productData.type || 'saas')
           localStorage.setItem('crabres_product_name', productData.name || '')
           localStorage.setItem('crabres_product_market', productData.market || 'global')
+          localStorage.setItem('crabres_product_id', String(productData.product_id || ''))
+          localStorage.setItem('crabres_scan_id', productData.scan_id || '')
           setOnboarded(true)
+          setPage('dashboard')
         }}
       />
     )

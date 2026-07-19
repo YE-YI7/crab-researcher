@@ -1,7 +1,7 @@
 /**
  * Dashboard — Agent 控制中心
  * 
- * 集成：目标追踪、周报、通知、审批队列、SSE 实时推送
+ * 集成：持久化研究扫描、机会卡片、目标追踪、通知、审批队列与周报
  * 风格：与 Surface 一致的暖白卡片风格
  */
 
@@ -16,18 +16,72 @@ interface DashboardProps {
   onBack: () => void
 }
 
-type Tab = 'overview' | 'notifications' | 'approvals' | 'reports'
+type Tab = 'research' | 'overview' | 'notifications' | 'approvals' | 'reports'
+
+interface ScanSummary {
+  id: string
+  product_id: number
+  scan_type: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | string
+  progress: number
+  summary: {
+    source_count?: number
+    competitor_count?: number
+    signal_count?: number
+    opportunity_count?: number
+    warnings?: string[]
+  }
+  error?: string | null
+  created_at: string
+  completed_at?: string | null
+}
+
+interface ScanSource {
+  id: number
+  type: string
+  platform?: string | null
+  title: string
+  url: string
+  excerpt: string
+  relevance_score: number
+}
+
+interface ScanOpportunity {
+  id: number
+  title: string
+  rationale: string
+  recommended_action: string
+  channel: string
+  rank: number
+  confidence: number
+  effort: string
+  expected_impact: string
+  evidence_source_ids: number[]
+  status: string
+}
+
+interface ScanDetail extends ScanSummary {
+  product: { id: number; name: string; industry: string; category: string; keywords: string[] }
+  sources: ScanSource[]
+  competitors: Array<{ id: number; source_id?: number; name: string; evidence_summary: string; confidence: number }>
+  market_signals: Array<{ id: number; source_id?: number; title: string; evidence_summary: string; confidence: number }>
+  opportunities: ScanOpportunity[]
+}
 
 export function Dashboard({ creature, onBack }: DashboardProps) {
-  const [tab, setTab] = useState<Tab>('overview')
+  const [tab, setTab] = useState<Tab>('research')
   const [goals, setGoals] = useState<any>(null)
   const [notifications, setNotifications] = useState<any[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [pending, setPending] = useState<any[]>([])
   const [reports, setReports] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [sseConnected, setSseConnected] = useState(false)
-  const sseRef = useRef<EventSource | null>(null)
+  const [scans, setScans] = useState<ScanSummary[]>([])
+  const [activeScan, setActiveScan] = useState<ScanDetail | null>(null)
+  const [scanLoading, setScanLoading] = useState(true)
+  const [scanStarting, setScanStarting] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const selectedScanId = useRef<string | null>(localStorage.getItem('crabres_scan_id'))
 
   // 加载数据
   useEffect(() => {
@@ -38,7 +92,7 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
           api<any>('/notifications?limit=30').catch(() => ({ notifications: [] })),
           api<any>('/notifications/unread').catch(() => ({ count: 0, notifications: [] })),
           api<any>('/autonomous/pending').catch(() => ({ pending: [] })),
-          api<any>('/reports/weekly?limit=4').catch(() => ({ reports: [] })),
+          api<any>('/weekly-reports?limit=4').catch(() => ({ reports: [] })),
         ])
         setGoals(goalRes)
         setNotifications(notifRes.notifications || [])
@@ -52,25 +106,111 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
     return () => clearInterval(interval)
   }, [])
 
-  // SSE 实时推送
+  // 扫描任务使用鉴权 API 轮询；原生 EventSource 无法携带 Bearer token。
   useEffect(() => {
-    const API = (import.meta as any).env?.VITE_API_BASE || '/api'
-    const es = new EventSource(`${API}/notifications/stream`)
-    sseRef.current = es
-
-    es.addEventListener('connected', () => setSseConnected(true))
-    es.addEventListener('notification', (e) => {
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const refresh = async () => {
       try {
-        const notif = JSON.parse(e.data)
-        setNotifications(prev => [notif, ...prev].slice(0, 50))
-        setUnreadCount(prev => prev + 1)
-      } catch {}
-    })
-    es.addEventListener('heartbeat', () => {})
-    es.onerror = () => setSseConnected(false)
+        const response = await api<{ items: ScanSummary[] }>('/scans?limit=10')
+        if (stopped) return
+        const items = response.items || []
+        setScans(items)
+        const preferredId = selectedScanId.current && items.some(item => item.id === selectedScanId.current)
+          ? selectedScanId.current
+          : items[0]?.id
+        if (preferredId) {
+          const detail = await api<ScanDetail>(`/scans/${preferredId}`)
+          if (!stopped) {
+            setActiveScan(detail)
+            selectedScanId.current = detail.id
+            localStorage.setItem('crabres_scan_id', detail.id)
+          }
+        } else if (!stopped) {
+          setActiveScan(null)
+        }
+        if (!stopped) setScanError(null)
+        const hasActiveWork = items.some(item => item.status === 'queued' || item.status === 'running')
+        if (!stopped) timer = setTimeout(refresh, hasActiveWork ? 4_000 : 30_000)
+      } catch (error: any) {
+        if (!stopped) {
+          setScanError(error?.message || 'Could not load research scans.')
+          timer = setTimeout(refresh, 30_000)
+        }
+      } finally {
+        if (!stopped) setScanLoading(false)
+      }
+    }
+    refresh()
 
-    return () => { es.close(); sseRef.current = null }
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
   }, [])
+
+  const selectScan = async (scanId: string) => {
+    selectedScanId.current = scanId
+    localStorage.setItem('crabres_scan_id', scanId)
+    setScanLoading(true)
+    try {
+      setActiveScan(await api<ScanDetail>(`/scans/${scanId}`))
+      setScanError(null)
+    } catch (error: any) {
+      setScanError(error?.message || 'Could not load this scan.')
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
+  const startScan = async () => {
+    setScanStarting(true)
+    setScanError(null)
+    try {
+      let productId = Number(localStorage.getItem('crabres_product_id')) || 0
+      if (!productId) {
+        const products = await api<Array<{ id: number }>>('/products')
+        productId = products[0]?.id || 0
+      }
+      if (!productId) throw new Error('Complete your product profile before starting a scan.')
+      const market = localStorage.getItem('crabres_product_market') || 'global'
+      const created = await api<ScanSummary>('/scans', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `scan-${Date.now()}` },
+        body: JSON.stringify({
+          product_id: productId,
+          scan_type: 'market_landscape',
+          locale: market === 'domestic' ? 'zh-CN' : 'en',
+          platforms: market === 'domestic'
+            ? ['xiaohongshu', 'zhihu', 'bilibili']
+            : ['reddit', 'hackernews', 'producthunt'],
+        }),
+      })
+      selectedScanId.current = created.id
+      localStorage.setItem('crabres_scan_id', created.id)
+      setScans(previous => [created, ...previous.filter(item => item.id !== created.id)])
+      setTab('research')
+      await selectScan(created.id)
+    } catch (error: any) {
+      setScanError(error?.message || 'Could not start a new scan.')
+    } finally {
+      setScanStarting(false)
+    }
+  }
+
+  const retryScan = async () => {
+    if (!activeScan) return
+    setScanStarting(true)
+    setScanError(null)
+    try {
+      await api(`/scans/${activeScan.id}/retry`, { method: 'POST' })
+      await selectScan(activeScan.id)
+    } catch (error: any) {
+      setScanError(error?.message || 'Could not retry this scan.')
+    } finally {
+      setScanStarting(false)
+    }
+  }
 
   const markRead = async (id: string) => {
     await api(`/notifications/${id}/read`, { method: 'POST' }).catch(() => {})
@@ -95,6 +235,7 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
   }
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
+    { key: 'research', label: 'Research', icon: <SearchSparkIcon /> },
     { key: 'overview', label: 'Overview', icon: <TargetIcon /> },
     { key: 'notifications', label: 'Alerts', icon: <BellIcon />, badge: unreadCount },
     { key: 'approvals', label: 'Approve', icon: <ShieldCheckIcon />, badge: pending.length },
@@ -111,8 +252,8 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
         <div className="flex-1">
           <p className="text-sm font-semibold text-primary">Agent Dashboard</p>
           <p className="text-[10px] text-muted flex items-center gap-1">
-            <span className={`w-1.5 h-1.5 rounded-full ${sseConnected ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-            {sseConnected ? 'Live connected' : 'Polling mode'}
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            Auto-refreshing research and alerts
           </p>
         </div>
       </div>
@@ -144,6 +285,7 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
           <div className="text-center py-16 text-muted text-sm">Loading dashboard...</div>
         ) : (
           <>
+            {tab === 'research' && <ResearchTab scans={scans} activeScan={activeScan} loading={scanLoading} error={scanError} starting={scanStarting} onSelect={selectScan} onStart={startScan} onRetry={retryScan} />}
             {tab === 'overview' && <OverviewTab goals={goals} pending={pending} unreadCount={unreadCount} reports={reports} />}
             {tab === 'notifications' && <NotificationsTab notifications={notifications} onMarkRead={markRead} onMarkAllRead={markAllRead} />}
             {tab === 'approvals' && <ApprovalsTab pending={pending} onApprove={approveAction} onReject={rejectAction} />}
@@ -153,6 +295,233 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
       </div>
     </div>
   )
+}
+
+// === Research Tab ===
+function ResearchTab({
+  scans,
+  activeScan,
+  loading,
+  error,
+  starting,
+  onSelect,
+  onStart,
+  onRetry,
+}: {
+  scans: ScanSummary[]
+  activeScan: ScanDetail | null
+  loading: boolean
+  error: string | null
+  starting: boolean
+  onSelect: (scanId: string) => void
+  onStart: () => void
+  onRetry: () => void
+}) {
+  const sourceById = new Map((activeScan?.sources || []).map(source => [source.id, source]))
+  const isWorking = activeScan?.status === 'queued' || activeScan?.status === 'running'
+
+  return (
+    <div className="space-y-5 animate-fade-in">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-primary">Research & opportunities</h2>
+          <p className="text-xs text-muted mt-1">Every recommendation links back to evidence.</p>
+        </div>
+        <button onClick={onStart} disabled={starting || isWorking}
+          className="btn-primary shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
+          {starting ? 'Starting…' : isWorking ? 'Scan running' : 'New scan'}
+        </button>
+      </div>
+
+      {error && (
+        <div role="alert" className="p-3 rounded-xl border border-red-200 bg-red-50 text-sm text-red-700 dark:bg-red-500/10 dark:border-red-500/20 dark:text-red-300">
+          {error}
+        </div>
+      )}
+
+      {loading && !activeScan ? (
+        <div className="card p-8 text-center" aria-live="polite">
+          <SearchSparkIcon className="w-8 h-8 text-brand mx-auto mb-3 animate-pulse" />
+          <p className="text-sm font-medium text-primary">Loading your research…</p>
+        </div>
+      ) : !activeScan ? (
+        <div className="card p-8 text-center">
+          <SearchSparkIcon className="w-9 h-9 text-muted mx-auto mb-3" />
+          <p className="text-sm font-medium text-primary">No evidence-backed scan yet</p>
+          <p className="text-xs text-muted mt-1 mb-5 max-w-sm mx-auto">
+            Start a market scan to collect current sources, competitor signals, customer discussions, and ranked actions.
+          </p>
+          <button onClick={onStart} disabled={starting} className="btn-primary disabled:opacity-50">
+            {starting ? 'Starting…' : 'Start first scan'}
+          </button>
+        </div>
+      ) : (
+        <>
+          <section className="card p-5">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="min-w-0">
+                <p className="text-[10px] text-muted uppercase tracking-wider mb-1">Latest research</p>
+                <h3 className="text-base font-semibold text-primary truncate">{activeScan.product.name}</h3>
+                <p className="text-xs text-muted mt-1">{activeScan.product.category}</p>
+              </div>
+              <StatusBadge status={activeScan.status} />
+            </div>
+
+            {isWorking && (
+              <div aria-live="polite">
+                <div className="flex justify-between text-xs text-secondary mb-2">
+                  <span>{activeScan.status === 'queued' ? 'Waiting for a research slot' : 'Collecting and structuring evidence'}</span>
+                  <span className="font-mono">{activeScan.progress}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-border overflow-hidden"
+                  role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={activeScan.progress}>
+                  <div className="h-full bg-brand rounded-full transition-all duration-700"
+                    style={{ width: `${activeScan.progress}%` }} />
+                </div>
+                <p className="text-[11px] text-muted mt-3">You can leave this page. The job continues on the server.</p>
+              </div>
+            )}
+
+            {activeScan.status === 'failed' && (
+              <div>
+                <p className="text-sm text-red-600 dark:text-red-400 mb-3">{activeScan.error || 'The scan stopped before results were saved.'}</p>
+                <button onClick={onRetry} disabled={starting} className="btn-primary disabled:opacity-50">
+                  {starting ? 'Retrying…' : 'Retry scan'}
+                </button>
+              </div>
+            )}
+
+            {activeScan.status === 'completed' && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <ResearchMetric value={activeScan.summary.source_count || 0} label="Sources" />
+                <ResearchMetric value={activeScan.summary.competitor_count || 0} label="Competitors" />
+                <ResearchMetric value={activeScan.summary.signal_count || 0} label="Signals" />
+                <ResearchMetric value={activeScan.summary.opportunity_count || 0} label="Opportunities" />
+              </div>
+            )}
+          </section>
+
+          {activeScan.status === 'completed' && (
+            <>
+              <section>
+                <h3 className="text-xs font-medium text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <ZapIcon className="w-3.5 h-3.5" /> Ranked opportunities
+                </h3>
+                {activeScan.opportunities.length === 0 ? (
+                  <div className="card p-6 text-center">
+                    <AlertTriangleIcon className="w-7 h-7 text-amber-500 mx-auto mb-2" />
+                    <p className="text-sm font-medium text-primary">Not enough evidence for a recommendation</p>
+                    <p className="text-xs text-muted mt-1">Check your research provider configuration, then run another scan.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {activeScan.opportunities.map(opportunity => (
+                      <article key={opportunity.id} className="card p-5">
+                        <div className="flex items-start gap-3">
+                          <span className="w-7 h-7 rounded-full bg-brand/10 text-brand text-xs font-bold flex items-center justify-center shrink-0">
+                            {opportunity.rank}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              <MetaBadge>{opportunity.channel}</MetaBadge>
+                              <MetaBadge>{Math.round(opportunity.confidence * 100)}% confidence</MetaBadge>
+                              <MetaBadge>{opportunity.effort} effort</MetaBadge>
+                              <MetaBadge>{opportunity.expected_impact} impact</MetaBadge>
+                            </div>
+                            <h4 className="text-sm font-semibold text-primary leading-snug">{opportunity.title}</h4>
+                            <p className="text-xs text-secondary mt-2 leading-relaxed">{opportunity.rationale}</p>
+                            <div className="mt-3 p-3 rounded-lg bg-hover">
+                              <p className="text-[10px] uppercase tracking-wider text-muted mb-1">Recommended next action</p>
+                              <p className="text-sm text-primary">{opportunity.recommended_action}</p>
+                            </div>
+                            {opportunity.evidence_source_ids.length > 0 && (
+                              <div className="flex flex-wrap gap-2 mt-3">
+                                {opportunity.evidence_source_ids.map(sourceId => {
+                                  const source = sourceById.get(sourceId)
+                                  return source ? (
+                                    <a key={sourceId} href={source.url} target="_blank" rel="noreferrer"
+                                      className="text-[11px] text-brand hover:underline max-w-full truncate">
+                                      Source: {source.title || new URL(source.url).hostname}
+                                    </a>
+                                  ) : null
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 className="text-xs font-medium text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <NewsIcon className="w-3.5 h-3.5" /> Evidence collected
+                </h3>
+                <div className="space-y-2">
+                  {activeScan.sources.slice(0, 8).map(source => (
+                    <a key={source.id} href={source.url} target="_blank" rel="noreferrer"
+                      className="card p-3 flex items-start gap-3 block hover:border-brand/20">
+                      <div className="w-8 h-8 rounded-lg bg-brand/8 flex items-center justify-center text-brand shrink-0">
+                        {source.type === 'social' ? <BellIcon className="w-4 h-4" /> : <SearchSparkIcon className="w-4 h-4" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-primary truncate">{source.title || source.url}</p>
+                        <p className="text-xs text-muted line-clamp-2 mt-0.5">{source.excerpt || 'Open source'}</p>
+                        <p className="text-[10px] text-muted mt-1">{source.platform || source.type} · {Math.round(source.relevance_score * 100)}% relevance</p>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+
+          {scans.length > 1 && (
+            <section>
+              <h3 className="text-xs font-medium text-muted uppercase tracking-wider mb-3">Previous scans</h3>
+              <div className="space-y-2">
+                {scans.map(scan => (
+                  <button key={scan.id} onClick={() => onSelect(scan.id)}
+                    aria-current={scan.id === activeScan.id ? 'true' : undefined}
+                    className={`w-full p-3 rounded-xl border text-left flex items-center gap-3 transition-colors ${
+                      scan.id === activeScan.id ? 'border-brand/30 bg-brand/5' : 'border-border hover:border-brand/20'
+                    }`}>
+                    <StatusBadge status={scan.status} />
+                    <span className="text-xs text-secondary flex-1">{new Date(scan.created_at).toLocaleString()}</span>
+                    <span className="text-xs text-muted">{scan.summary.opportunity_count || 0} opportunities</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const style = status === 'completed'
+    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+    : status === 'failed'
+      ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+      : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+  return <span className={`px-2 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider shrink-0 ${style}`}>{status}</span>
+}
+
+function ResearchMetric({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="rounded-xl bg-hover p-3 text-center">
+      <p className="text-xl font-bold text-primary">{value}</p>
+      <p className="text-[10px] text-muted uppercase tracking-wider">{label}</p>
+    </div>
+  )
+}
+
+function MetaBadge({ children }: { children: React.ReactNode }) {
+  return <span className="px-2 py-0.5 rounded-full bg-hover text-[10px] text-secondary capitalize">{children}</span>
 }
 
 // === Overview Tab ===
@@ -371,7 +740,7 @@ function ReportsTab({ reports }: any) {
         <button
           onClick={async () => {
             try {
-              await api('/reports/weekly/generate', { method: 'POST' })
+              await api('/weekly-reports/generate', { method: 'POST' })
               window.location.reload()
             } catch {}
           }}

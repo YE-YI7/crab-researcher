@@ -47,7 +47,7 @@ export function Compare({ onGetStarted, onBack }: CompareProps) {
               { feature: 'Tells you if your direction is wrong', crabres: true, chatgpt: false },
               { feature: 'Writes ready-to-publish posts', crabres: true, chatgpt: 'partial' },
               { feature: 'Personalized outreach emails', crabres: true, chatgpt: 'partial' },
-              { feature: '13 specialized expert agents', crabres: true, chatgpt: false },
+              { feature: 'Source-linked market scans', crabres: true, chatgpt: false },
               { feature: 'Monitors competitors 24/7', crabres: true, chatgpt: false },
               { feature: 'Growth plan with KPI tracking', crabres: true, chatgpt: false },
               { feature: 'Budget-aware recommendations', crabres: true, chatgpt: false },

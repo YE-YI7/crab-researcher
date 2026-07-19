@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react'
 import type { CreatureState } from '../components/creature/types'
 import { api } from '../lib/api'
 import { t, getLang } from '../lib/i18n'
-import { SettingsIcon, PenIcon, ChatIcon, ZapIcon, ChartBarIcon, PlaybookIcon } from '../components/ui/Icons'
+import { SettingsIcon, PenIcon, ChatIcon, ZapIcon, ChartBarIcon, PlaybookIcon, SearchSparkIcon } from '../components/ui/Icons'
 import PixImg from '../assets/pix_basic.png'
 
 interface SurfaceProps {
@@ -25,22 +25,25 @@ export function Surface({ creature, onChat, onPlan, onDashboard, onSettings }: S
   const [stats, setStats] = useState<any>(null)
   const [expSummary, setExpSummary] = useState<any>(null)
   const [recentActions, setRecentActions] = useState<any[]>([])
+  const [latestScan, setLatestScan] = useState<any>(null)
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [taskRes, discRes, statRes, expRes, actRes] = await Promise.all([
+        const [taskRes, discRes, statRes, expRes, actRes, scanRes] = await Promise.all([
           api<any>('/growth/tasks').catch(() => ({ tasks: [] })),
           api<any>('/growth/discoveries').catch(() => ({ discoveries: [] })),
           api<any>('/growth/stats').catch(() => null),
           api<any>('/growth/experiments/summary').catch(() => null),
           api<any>('/growth/actions').catch(() => ({ actions: [] })),
+          api<any>('/scans?limit=1').catch(() => ({ items: [] })),
         ])
         setTasks(taskRes.tasks || [])
         setDiscoveries(discRes.discoveries || [])
         if (statRes) setStats(statRes)
         if (expRes) setExpSummary(expRes)
         setRecentActions((actRes.actions || []).slice(-5).reverse())
+        setLatestScan(scanRes.items?.[0] || null)
       } catch {}
     }
     load()
@@ -91,6 +94,21 @@ export function Surface({ creature, onChat, onPlan, onDashboard, onSettings }: S
           {t('surface.today')}
         </h3>
         <div className="space-y-2">
+          {latestScan && (
+            <TaskCard
+              icon={<SearchSparkIcon />}
+              title={latestScan.status === 'completed'
+                ? `${latestScan.summary?.opportunity_count || 0} research opportunities ready`
+                : latestScan.status === 'failed'
+                  ? 'Research scan needs attention'
+                  : `Market research ${latestScan.progress || 0}% complete`}
+              subtitle={latestScan.status === 'completed'
+                ? `${latestScan.summary?.source_count || 0} sources · evidence attached`
+                : 'The scan continues safely on the server'}
+              action="View"
+              onAction={onDashboard}
+            />
+          )}
           {tasks.length > 0 ? tasks.map((tk: any, i: number) => (
             <TaskCard
               key={tk.id || i}
@@ -164,7 +182,7 @@ export function Surface({ creature, onChat, onPlan, onDashboard, onSettings }: S
       <div className="w-full space-y-2 mb-8">
         <button onClick={onDashboard}
           className="w-full py-3 rounded-xl border border-brand/20 text-sm font-medium text-brand hover:bg-brand/5 transition-all flex items-center justify-center gap-2">
-          <ChartBarIcon className="w-4 h-4" /> Agent Dashboard
+          <ChartBarIcon className="w-4 h-4" /> Research & Opportunities
         </button>
         <button onClick={onPlan}
           className="w-full py-3 rounded-xl border border-border text-sm font-medium text-primary hover:bg-hover transition-all">
@@ -173,7 +191,7 @@ export function Surface({ creature, onChat, onPlan, onDashboard, onSettings }: S
       </div>
 
       {/* 空状态提示 */}
-      {!hasStats && discoveries.length === 0 && tasks.length === 0 && (
+      {!hasStats && discoveries.length === 0 && tasks.length === 0 && !latestScan && (
         <p className="text-xs text-muted text-center mt-4">{t('surface.empty')}</p>
       )}
     </div>

@@ -74,6 +74,10 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
   const [loading, setLoading] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [creature, setCreature] = useState<CreatureState | null>(null)
+  const [createdProductId, setCreatedProductId] = useState<number | null>(null)
+  const [scanRequestKey] = useState(() =>
+    globalThis.crypto?.randomUUID?.() || `onboarding-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  )
 
   const handleStep1Next = () => {
     if (!productName.trim()) return
@@ -106,16 +110,45 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
       type: productType,
       goal_users: userGoal,
       monthly_budget: budget,
+      product_id: null as number | null,
+      scan_id: '',
     }
 
-    // 存入后端记忆
     try {
-      await api('/agent/chat', {
+      let productId = createdProductId
+      if (!productId) {
+        const product = await api<{ id: number }>('/products', {
+          method: 'POST',
+          body: JSON.stringify({
+            product_name: productName.trim(),
+            industry: PRODUCT_TYPES.find(item => item.value === productType)?.label || productType,
+            category: productDesc.trim().slice(0, 100),
+            keywords: [productName.trim(), productType, ...productDesc.trim().split(/\s+/).slice(0, 5)]
+              .filter(Boolean),
+            price_range: {},
+            platforms: market === 'domestic'
+              ? ['xiaohongshu', 'zhihu', 'bilibili']
+              : ['reddit', 'hackernews', 'producthunt'],
+          }),
+        })
+        productId = product.id
+        setCreatedProductId(productId)
+      }
+
+      const scan = await api<{ id: string }>('/scans', {
         method: 'POST',
+        headers: { 'Idempotency-Key': scanRequestKey },
         body: JSON.stringify({
-          message: `My product is called "${productName}". Market focus: ${market}. ${productDesc ? `It's ${productDesc}.` : ''} ${productUrl ? `URL: ${productUrl}.` : ''} Product type: ${productType || 'not specified'}. Goal: ${userGoal || 'not set'} users in 3 months. Monthly budget: $${budget || '0'}.`,
+          product_id: productId,
+          scan_type: 'market_landscape',
+          locale: market === 'domestic' ? 'zh-CN' : 'en',
+          platforms: market === 'domestic'
+            ? ['xiaohongshu', 'zhihu', 'bilibili']
+            : ['reddit', 'hackernews', 'producthunt'],
         }),
       })
+      productData.product_id = productId
+      productData.scan_id = scan.id
     } catch (e: any) {
       setStartError(e?.message || 'Could not start the first research scan. Please try again.')
       setLoading(false)
@@ -345,8 +378,8 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
             </h2>
             <p className="text-sm text-muted mb-6">
               {market === 'global' 
-                ? 'Review the team configured for your first scan.'
-                : '确认将参与首次扫描的专家配置。'}
+                ? 'Review the evidence pipeline for your first scan.'
+                : '确认首次扫描将收集和评估的证据。'}
             </p>
 
             <div className="mb-4">
@@ -366,21 +399,19 @@ export function Onboarding({ userId, onComplete }: OnboardingProps) {
               </p>
             </div>
 
-            {/* 专家组装动画 */}
+            {/* 扫描管线 */}
             <div className="space-y-1.5 text-left max-w-xs mx-auto mb-6">
               {[
-                'Market Researcher', 'Economist', 'Content Strategist',
-                'Social Media', 'Partnerships', 'AI Distribution',
-                'Psychologist', 'Product Growth', 'Data Analyst',
-                'Copywriter', 'Designer', 'Critic', 'Chief Growth Officer',
+                'Current market sources',
+                'Competitor evidence',
+                'Customer discussions',
+                'Ranked growth opportunities',
               ].map((expert, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs animate-fade-in"
                   style={{ animationDelay: `${i * 100}ms`, opacity: 0, animationFillMode: 'forwards' }}>
                   <span className="text-brand">·</span>
                   <span className="text-secondary">{expert}</span>
-                  <span className="text-muted">
-                    {market === 'global' ? 'configured' : '已配置'}
-                  </span>
+                  <span className="text-muted">{market === 'global' ? 'ready' : '已就绪'}</span>
                 </div>
               ))}
             </div>

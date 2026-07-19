@@ -9,7 +9,7 @@ CrabRes Notifications API — 前端获取 Agent 主动通知
 - GET /notifications/stream — SSE 实时推送
 - GET /goals — 获取目标进度
 - POST /goals — 设定目标
-- GET /reports/weekly — 获取周报
+- GET /weekly-reports — 获取周报
 - GET /autonomous/pending — 获取待确认操作
 - POST /autonomous/{id}/approve — 批准操作
 - POST /autonomous/{id}/reject — 拒绝操作
@@ -158,7 +158,7 @@ async def set_goal(
 
 # === Weekly Reports ===
 
-@router.get("/reports/weekly")
+@router.get("/weekly-reports")
 async def get_weekly_reports(
     request: Request,
     limit: int = 4,
@@ -176,7 +176,7 @@ async def get_weekly_reports(
         return {"reports": [], "error": str(e)}
 
 
-@router.post("/reports/weekly/generate")
+@router.post("/weekly-reports/generate")
 async def generate_weekly_report(
     request: Request,
     current_user: dict = Depends(get_current_user),

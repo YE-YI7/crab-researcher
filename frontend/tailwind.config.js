@@ -5,19 +5,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: { DEFAULT: '#0EA5E9', hover: '#0284C7', light: '#E0F7FF' },
-        accent: { DEFAULT: '#F97316', light: '#FFF3E8' },
+        brand: { DEFAULT: '#C2410C', hover: '#9A3412', light: '#FFF7ED' },
+        accent: { DEFAULT: '#1D4ED8', light: '#EFF6FF' },
       },
       fontFamily: {
-        heading: ['Space Grotesk', 'system-ui', 'sans-serif'],
-        body: ['DM Sans', 'system-ui', 'sans-serif'],
+        heading: ['Inter', 'system-ui', 'sans-serif'],
+        body: ['Inter', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
       },
       borderRadius: {
-        sm: '10px',
-        md: '14px',
-        lg: '20px',
-        xl: '28px',
+        sm: '8px',
+        md: '12px',
+        lg: '16px',
+        xl: '20px',
       },
       animation: {
         'fade-in': 'fade-in 0.5s ease forwards',

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
 import app.models  # noqa: F401
-from app.api.v2 import scans
+from app.api.v2 import products, scans
 from app.api.v2.scans import _owned_job
 from app.core.database import Base, get_db
 from app.core.security import create_access_token
@@ -173,13 +173,6 @@ def test_scan_api_is_idempotent_and_tenant_scoped(tmp_path, monkeypatch):
         async with sessions() as db:
             user = User(company_name="Tenant", contact_email="api@example.test", hashed_password="x")
             db.add(user)
-            await db.flush()
-            db.add(UserProduct(
-                user_id=user.id,
-                product_name="Product",
-                industry="SaaS",
-                category="research",
-            ))
             await db.commit()
             return user.id
 
@@ -187,13 +180,19 @@ def test_scan_api_is_idempotent_and_tenant_scoped(tmp_path, monkeypatch):
 
     async def override_db():
         async with sessions() as db:
-            yield db
+            try:
+                yield db
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
     async def skip_background_run(job_id: str):
         return True
 
     monkeypatch.setattr(scans, "run_scan_job", skip_background_run)
     app = FastAPI()
+    app.include_router(products.router, prefix="/api")
     app.include_router(scans.router, prefix="/api")
     app.dependency_overrides[get_db] = override_db
     client = TestClient(app)
@@ -202,8 +201,18 @@ def test_scan_api_is_idempotent_and_tenant_scoped(tmp_path, monkeypatch):
         "Idempotency-Key": "same-request",
     }
 
-    first = client.post("/api/scans", headers=headers, json={"product_id": 1})
-    second = client.post("/api/scans", headers=headers, json={"product_id": 1})
+    product = client.post("/api/products", headers=headers, json={
+        "product_name": "Product",
+        "industry": "SaaS",
+        "category": "research",
+        "platforms": ["reddit"],
+    })
+    assert product.status_code == 201
+    product_id = product.json()["id"]
+    assert len(client.get("/api/products", headers=headers).json()) == 1
+
+    first = client.post("/api/scans", headers=headers, json={"product_id": product_id})
+    second = client.post("/api/scans", headers=headers, json={"product_id": product_id})
     assert first.status_code == 202
     assert second.status_code == 202
     assert first.json()["id"] == second.json()["id"]
@@ -212,5 +221,6 @@ def test_scan_api_is_idempotent_and_tenant_scoped(tmp_path, monkeypatch):
     other_headers = {
         "Authorization": f"Bearer {create_access_token({'user_id': user_id + 1})}",
     }
+    assert client.get(f"/api/products/{product_id}", headers=other_headers).status_code == 404
     assert client.get(f"/api/scans/{first.json()['id']}", headers=other_headers).status_code == 404
     asyncio.run(engine.dispose())
