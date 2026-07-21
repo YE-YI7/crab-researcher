@@ -178,8 +178,9 @@ All tiers fall back to Moonshot / OpenRouter when TokenDance is unavailable. Pro
 
 **Deployment**
 - Frontend: Vercel
-- Backend: Render (Web Service + Background Worker for Daemon)
-- Database: Neon PostgreSQL
+- API: Render Web Service
+- Browser execution: dedicated Render Background Worker (disabled until explicitly configured)
+- Database: Neon PostgreSQL (shared durable job queue and small private artifacts)
 
 ---
 
@@ -198,6 +199,11 @@ cp .env.example .env          # fill in TOKENDANCE_API_KEY, TAVILY_API_KEY, DATA
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8002
 
+# Optional: real browser jobs (separate terminal/process)
+python -m patchright install chromium
+# Set BROWSER_WORKER_ENABLED=true in .env, then run:
+python -m app.workers.browser_worker
+
 # Frontend (separate terminal)
 cd frontend
 npm install
@@ -210,6 +216,27 @@ npm run dev                    # http://localhost:3000
 - `DATABASE_URL` / `DATABASE_URL_SYNC` — Postgres; sqlite works for local dev with code changes
 
 Optional fallback keys (auto-skipped if missing): `MOONSHOT_API_KEY`, `OPENROUTER_API_KEY`, `FIRECRAWL_API_KEY`.
+
+### Browser worker and sandbox boundary
+
+Browser jobs are durable, tenant-scoped, approval-gated workflows. The API writes jobs to PostgreSQL and a separate worker claims them, launches Chromium, applies an HTTPS/domain/public-IP network policy, and stores bounded screenshots or extracted text back in PostgreSQL. Use `BROWSER_RUN_INLINE=true` only for local development.
+
+For local development, `BROWSER_PROVIDER=local` runs Chromium in the worker process and is **not** a per-job security boundary. Production uses `BROWSER_PROVIDER=vercel`: the Render worker creates one Vercel Firecracker microVM per browser job, boots it from a prebuilt Chromium image, and applies a deny-by-default SNI firewall plus private/reserved CIDR blocks. Vercel credentials stay in the Render worker and are never copied into the microVM.
+
+Build and push the browser runtime to Vercel Container Registry (replace the team/project slugs):
+
+```bash
+vercel link
+vercel env pull
+printf '%s' "$VERCEL_OIDC_TOKEN" | docker login vcr.vercel.com --username oidc --password-stdin
+docker buildx build \
+  -f Dockerfile.sandbox-image \
+  --platform linux/amd64 \
+  --output "type=image,name=vcr.vercel.com/TEAM/PROJECT/crab-browser:latest,push=true,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true" \
+  .
+```
+
+Deploy the database worker with `Dockerfile.browser`, give it the same `DATABASE_URL` as the API, and configure `BROWSER_WORKER_ENABLED=true`, `BROWSER_PROVIDER=vercel`, `VERCEL_SANDBOX_IMAGE=crab-browser:latest`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`, and a sensitive `VERCEL_TOKEN`. Set `BROWSER_WORKER_ENABLED=true`, `BROWSER_PROVIDER=vercel`, and the image name on the API service too, but keep the token only on the worker. Keep `BROWSER_RUN_INLINE=false` in production.
 
 **Other entry points**: Discord / WhatsApp / Feishu bot bindings (`app/channels/`), CLI (`cli/`), MCP plugin (`mcp/`).
 

@@ -1,0 +1,10 @@
+FROM public.ecr.aws/docker/library/python:3.13-slim
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    PYTHONUNBUFFERED=1
+
+RUN pip install --no-cache-dir "patchright>=1.58.0" && \
+    python -m patchright install --with-deps chromium && \
+    chmod -R a+rX /opt/ms-playwright
+
+WORKDIR /vercel/sandbox

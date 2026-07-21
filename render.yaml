@@ -38,6 +38,10 @@ services:
         value: "false"
       - key: ENABLE_REAL_WORLD_EXECUTION
         value: "false"
+      - key: BROWSER_WORKER_ENABLED
+        value: "false"
+      - key: BROWSER_PROVIDER
+        value: "vercel"
       - key: ADMIN_API_KEY
         sync: false
       - key: GITHUB_WEBHOOK_SECRET

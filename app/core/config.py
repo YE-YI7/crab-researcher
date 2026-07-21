@@ -25,6 +25,21 @@ class Settings(BaseSettings):
     # Keep publishing/email/browser side effects off until credentials are
     # stored per tenant and a durable audit log is in place.
     ENABLE_REAL_WORLD_EXECUTION: bool = False
+    # Browser automation runs in a separate worker. Keep disabled on the
+    # shared Render API until an isolated worker/provider is configured.
+    BROWSER_WORKER_ENABLED: bool = False
+    BROWSER_RUN_INLINE: bool = False
+    BROWSER_PROVIDER: str = "local"
+    BROWSER_JOB_TIMEOUT_SECONDS: int = 90
+    BROWSER_MAX_STEPS: int = 20
+    BROWSER_MAX_ACTIVE_JOBS_PER_USER: int = 3
+    BROWSER_MAX_ARTIFACT_BYTES: int = 2_000_000
+    BROWSER_VERCEL_NODE_BINARY: str = "node"
+    BROWSER_VERCEL_VCPUS: int = 1
+    VERCEL_SANDBOX_IMAGE: Optional[str] = None
+    VERCEL_TEAM_ID: Optional[str] = None
+    VERCEL_PROJECT_ID: Optional[str] = None
+    VERCEL_TOKEN: Optional[str] = None
 
     # ========== 数据库 ==========
     DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/crab_researcher"

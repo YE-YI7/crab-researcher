@@ -1,0 +1,8 @@
+{
+  "name": "crabres-vercel-sandbox-bridge",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@vercel/sandbox": "2.8.0"
+  }
+}

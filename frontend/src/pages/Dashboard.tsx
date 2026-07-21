@@ -8,15 +8,15 @@
 import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { CreatureState } from '../components/creature/types'
-import { api } from '../lib/api'
-import { ArrowLeftIcon, BellIcon, TargetIcon, CalendarIcon, ShieldCheckIcon, ZapIcon, SearchSparkIcon, NewsIcon, ChartBarIcon, BrainIcon, GearIcon, PinIcon, LockIcon, CircleCheckIcon, AlertTriangleIcon, RocketIcon } from '../components/ui/Icons'
+import { api, apiBlobUrl } from '../lib/api'
+import { ArrowLeftIcon, BellIcon, TargetIcon, CalendarIcon, ShieldCheckIcon, ZapIcon, SearchSparkIcon, NewsIcon, ChartBarIcon, BrainIcon, GearIcon, PinIcon, LockIcon, CircleCheckIcon, AlertTriangleIcon, RocketIcon, GlobeIcon } from '../components/ui/Icons'
 
 interface DashboardProps {
   creature: CreatureState
   onBack: () => void
 }
 
-type Tab = 'research' | 'overview' | 'notifications' | 'approvals' | 'reports'
+type Tab = 'research' | 'browser' | 'overview' | 'notifications' | 'approvals' | 'reports'
 
 interface ScanSummary {
   id: string
@@ -66,6 +66,47 @@ interface ScanDetail extends ScanSummary {
   competitors: Array<{ id: number; source_id?: number; name: string; evidence_summary: string; confidence: number }>
   market_signals: Array<{ id: number; source_id?: number; title: string; evidence_summary: string; confidence: number }>
   opportunities: ScanOpportunity[]
+}
+
+interface BrowserCapabilities {
+  enabled: boolean
+  provider: string
+  isolation: string
+  approval_required_for: string[]
+  credentials_supported: boolean
+}
+
+interface BrowserJobSummary {
+  id: string
+  status: string
+  provider: string
+  goal: string
+  start_url: string
+  current_url?: string | null
+  current_step: number
+  summary: Record<string, any>
+  error?: string | null
+  created_at: string
+}
+
+interface BrowserJobDetail extends BrowserJobSummary {
+  steps: Array<{
+    id: number
+    position: number
+    action: string
+    status: string
+    requires_approval: boolean
+    result: Record<string, any>
+    error?: string | null
+  }>
+  artifacts: Array<{
+    id: string
+    step_id?: number | null
+    kind: string
+    content_type: string
+    size_bytes: number
+    download_url: string
+  }>
 }
 
 export function Dashboard({ creature, onBack }: DashboardProps) {
@@ -236,6 +277,7 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { key: 'research', label: 'Research', icon: <SearchSparkIcon /> },
+    { key: 'browser', label: 'Browser', icon: <GlobeIcon /> },
     { key: 'overview', label: 'Overview', icon: <TargetIcon /> },
     { key: 'notifications', label: 'Alerts', icon: <BellIcon />, badge: unreadCount },
     { key: 'approvals', label: 'Approve', icon: <ShieldCheckIcon />, badge: pending.length },
@@ -286,6 +328,7 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
         ) : (
           <>
             {tab === 'research' && <ResearchTab scans={scans} activeScan={activeScan} loading={scanLoading} error={scanError} starting={scanStarting} onSelect={selectScan} onStart={startScan} onRetry={retryScan} />}
+            {tab === 'browser' && <BrowserJobsTab />}
             {tab === 'overview' && <OverviewTab goals={goals} pending={pending} unreadCount={unreadCount} reports={reports} />}
             {tab === 'notifications' && <NotificationsTab notifications={notifications} onMarkRead={markRead} onMarkAllRead={markAllRead} />}
             {tab === 'approvals' && <ApprovalsTab pending={pending} onApprove={approveAction} onReject={rejectAction} />}
@@ -293,6 +336,201 @@ export function Dashboard({ creature, onBack }: DashboardProps) {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// === Browser Jobs Tab ===
+function BrowserJobsTab() {
+  const [capabilities, setCapabilities] = useState<BrowserCapabilities | null>(null)
+  const [jobs, setJobs] = useState<BrowserJobSummary[]>([])
+  const [activeJob, setActiveJob] = useState<BrowserJobDetail | null>(null)
+  const [startUrl, setStartUrl] = useState('https://example.com')
+  const [goal, setGoal] = useState('Inspect the landing page and capture the visible evidence')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null)
+  const selectedJobId = useRef<string | null>(null)
+
+  const load = async (preferredId?: string) => {
+    const [caps, list] = await Promise.all([
+      api<BrowserCapabilities>('/browser-jobs/capabilities'),
+      api<{ items: BrowserJobSummary[] }>('/browser-jobs?limit=10'),
+    ])
+    setCapabilities(caps)
+    setJobs(list.items || [])
+    const selectedId = preferredId || selectedJobId.current || list.items?.[0]?.id
+    if (selectedId) {
+      selectedJobId.current = selectedId
+      setActiveJob(await api<BrowserJobDetail>(`/browser-jobs/${selectedId}`))
+    }
+    return (list.items || []).some(job => ['queued', 'running'].includes(job.status))
+  }
+
+  useEffect(() => {
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const refresh = async () => {
+      try {
+        const hasActiveWork = await load()
+        if (!stopped) setError(null)
+        if (!stopped) timer = setTimeout(refresh, hasActiveWork ? 4_000 : 15_000)
+      } catch (err: any) {
+        if (!stopped) setError(err?.message || 'Could not load browser jobs.')
+        if (!stopped) timer = setTimeout(refresh, 15_000)
+      }
+    }
+    refresh()
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
+  // Polling intentionally owns its refresh cycle; active state is read on each response.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    let objectUrl: string | null = null
+    const screenshot = [...(activeJob?.artifacts || [])].reverse().find(item => item.kind === 'screenshot')
+    if (!screenshot || !activeJob) {
+      setScreenshotUrl(null)
+      return
+    }
+    apiBlobUrl(screenshot.download_url).then(url => {
+      if (disposed) URL.revokeObjectURL(url)
+      else {
+        objectUrl = url
+        setScreenshotUrl(url)
+      }
+    }).catch(() => setScreenshotUrl(null))
+    return () => {
+      disposed = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [activeJob])
+
+  const createJob = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const created = await api<BrowserJobSummary>('/browser-jobs', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `browser-${Date.now()}` },
+        body: JSON.stringify({ start_url: startUrl, goal }),
+      })
+      await load(created.id)
+    } catch (err: any) {
+      setError(err?.message || 'Could not start the browser job.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const approve = async () => {
+    if (!activeJob) return
+    setBusy(true)
+    try {
+      await api(`/browser-jobs/${activeJob.id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmation: 'approve' }),
+      })
+      await load(activeJob.id)
+    } catch (err: any) {
+      setError(err?.message || 'Could not approve this browser action.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-5 animate-fade-in">
+      <div>
+        <h2 className="text-lg font-bold text-primary">Browser worker</h2>
+        <p className="text-xs text-muted mt-1">Private artifacts, restricted network access, and approval before external changes.</p>
+      </div>
+
+      {error && <div role="alert" className="p-3 rounded-xl border border-red-200 bg-red-50 text-sm text-red-700 dark:bg-red-500/10 dark:border-red-500/20 dark:text-red-300">{error}</div>}
+
+      {capabilities && !capabilities.enabled ? (
+        <div className="card p-6">
+          <div className="flex items-start gap-3">
+            <LockIcon className="w-6 h-6 text-amber-500 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-primary">Browser execution is not enabled on this environment</p>
+              <p className="text-xs text-muted mt-1 leading-relaxed">The API and approval workflow are installed, but this deployment has no isolated browser worker. Research continues to use source-reading providers.</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <section className="card p-5 space-y-4">
+          <div className="grid gap-3">
+            <label className="text-xs text-secondary">Start URL
+              <input type="url" value={startUrl} onChange={event => setStartUrl(event.target.value)} placeholder="https://example.com" className="w-full mt-1" />
+            </label>
+            <label className="text-xs text-secondary">Goal
+              <textarea value={goal} onChange={event => setGoal(event.target.value)} rows={2} className="w-full mt-1 resize-none" />
+            </label>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] text-muted">HTTPS only · no credentials · up to 3 active jobs</p>
+            <button onClick={createJob} disabled={busy || !startUrl || !goal} className="btn-primary disabled:opacity-50">
+              {busy ? 'Starting…' : 'Start safe inspection'}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {activeJob && (
+        <section className="card p-5 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wider text-muted">Current browser job</p>
+              <p className="text-sm font-semibold text-primary mt-1">{activeJob.goal}</p>
+              <p className="text-[11px] text-muted font-mono truncate mt-1">{activeJob.current_url || activeJob.start_url}</p>
+            </div>
+            <StatusBadge status={activeJob.status} />
+          </div>
+
+          {activeJob.status === 'awaiting_approval' && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 dark:bg-amber-500/10 dark:border-amber-500/20">
+              <p className="text-sm font-medium text-primary">The next action can change external state.</p>
+              <p className="text-xs text-muted mt-1">Review the completed steps and screenshot before allowing it.</p>
+              <button onClick={approve} disabled={busy} className="btn-primary mt-3 disabled:opacity-50">Approve next action</button>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {activeJob.steps.map(step => (
+              <div key={step.id} className="flex items-center gap-3 rounded-lg bg-hover p-3">
+                <span className={`w-2 h-2 rounded-full ${step.status === 'completed' ? 'bg-emerald-500' : step.status === 'failed' ? 'bg-red-500' : step.status === 'awaiting_approval' ? 'bg-amber-500' : 'bg-gray-300'}`} />
+                <span className="text-xs font-medium text-primary capitalize">{step.action}</span>
+                <span className="text-[10px] text-muted flex-1">{step.status.replace('_', ' ')}</span>
+                {step.requires_approval && <span className="text-[9px] text-amber-600">approval gated</span>}
+              </div>
+            ))}
+          </div>
+
+          {screenshotUrl && (
+            <div className="rounded-xl overflow-hidden border border-border bg-white">
+              <img src={screenshotUrl} alt="Authenticated browser job screenshot" className="w-full h-auto" />
+            </div>
+          )}
+        </section>
+      )}
+
+      {jobs.length > 1 && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-medium text-muted uppercase tracking-wider">Previous browser jobs</h3>
+          {jobs.map(job => (
+            <button key={job.id} onClick={() => load(job.id)} className="card w-full p-3 flex items-center gap-3 text-left">
+              <StatusBadge status={job.status} />
+              <span className="text-xs text-secondary truncate flex-1">{job.goal}</span>
+              <span className="text-[10px] text-muted">{new Date(job.created_at).toLocaleString()}</span>
+            </button>
+          ))}
+        </section>
+      )}
     </div>
   )
 }

@@ -36,6 +36,7 @@ from app.api.v2 import execution as execution_v2
 from app.api.v2 import workspace as workspace_v2
 from app.api.v2 import scans as scans_v2
 from app.api.v2 import products as products_v2
+from app.api.v2 import browser_jobs as browser_jobs_v2
 from app.channels.feishu_bot import router as feishu_router
 from app.channels.openclaw_skill import router as openclaw_router
 from app.channels.discord_bot import router as discord_router
@@ -208,6 +209,7 @@ app.include_router(execution_v2.router, prefix=settings.API_PREFIX)
 app.include_router(workspace_v2.router, prefix=settings.API_PREFIX)
 app.include_router(scans_v2.router, prefix=settings.API_PREFIX)
 app.include_router(products_v2.router, prefix=settings.API_PREFIX)
+app.include_router(browser_jobs_v2.router, prefix=settings.API_PREFIX)
 
 # 渠道路由
 app.include_router(feishu_router, prefix=settings.API_PREFIX)
